@@ -70,6 +70,29 @@ actor StreamResolver {
         }
     }
 
+    /// An m4a file for the iPhone app, which plays with AVPlayer and so can't take
+    /// WebM/Opus. About 128 kbps, or about 48 with `low` where YouTube has it.
+    /// `ahead`: the phone downloading the next song, held to the prefetch budget.
+    func phoneAudio(_ videoId: String, low: Bool, ahead: Bool) async throws -> Data {
+        if ahead, !backgroundAllowed { throw Failure.ytdlp("Too many requests; try again later") }
+        recentRequests.append(.now)
+        let format = low ? "ba[ext=m4a][abr<=64]/ba[ext=m4a]" : "ba[ext=m4a][abr<=160]/ba[ext=m4a]"
+        do {
+            let streams = try await (try? Self.run(videoId, video: false, maxHeight: 0, client: "web_embedded", format: format))
+                ?? Self.run(videoId, video: false, maxHeight: 0, client: nil, format: format)
+            let wait = streams.availableAt.timeIntervalSinceNow + 0.2
+            if wait > 0 { try await Task.sleep(for: .seconds(wait)) }
+            let (data, response) = try await URLSession.shared.data(from: streams.audio)
+            guard (response as? HTTPURLResponse)?.statusCode == 200 else {
+                throw Failure.ytdlp("YouTube refused the audio file")
+            }
+            return data
+        } catch {
+            noteFailure(error)
+            throw error
+        }
+    }
+
     private var prefetchQueue: [(id: String, video: Bool, maxHeight: Int)] = []
     private var prefetchesRunning = 0
 
@@ -153,8 +176,8 @@ actor StreamResolver {
         return min(0, target - track)
     }
 
-    private static func run(_ videoId: String, video: Bool, maxHeight: Int, client: String?) async throws -> Streams {
-        let format = video ? "bv*[height<=\(maxHeight)]+ba/b[height<=\(maxHeight)]/b" : "ba/b"
+    private static func run(_ videoId: String, video: Bool, maxHeight: Int, client: String?, format: String? = nil) async throws -> Streams {
+        let format = format ?? (video ? "bv*[height<=\(maxHeight)]+ba/b[height<=\(maxHeight)]/b" : "ba/b")
         let page = video ? "https://www.youtube.com/watch?v=" : "https://music.youtube.com/watch?v="
         if let warm = await YTDLPWorker.shared.resolve(url: page + videoId, format: format, client: client, cookies: cookieFile?.path),
            let first = warm.urls.first {

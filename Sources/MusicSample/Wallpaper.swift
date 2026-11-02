@@ -84,6 +84,10 @@ import SwiftUI
         return min(0.85, max(base, 1 - ceiling / brightness))
     }
 
+    /// The wallpaper's main colour, for the sidebar, player bar and queue, so the
+    /// panels and the picture share one colour instead of competing.
+    private(set) var tint: Color?
+
     @ObservationIgnored private var coverURL: URL?
     @ObservationIgnored private var timer: Timer?
     @ObservationIgnored private var loadToken = 0
@@ -161,7 +165,7 @@ import SwiftUI
         loadToken += 1
         let token = loadToken
         guard let url else {
-            withAnimation(.easeInOut(duration: 1.2)) { image = nil; imageID = ""; brightness = 0 }
+            withAnimation(.easeInOut(duration: 1.2)) { image = nil; imageID = ""; brightness = 0; tint = nil }
             return
         }
         Task.detached(priority: .utility) { [weak self] in
@@ -175,15 +179,40 @@ import SwiftUI
                 decoded = Self.downsample(source)
             }
             let light = decoded.map(Self.averageBrightness) ?? 0
+            let color = decoded.map(Self.mainColor)
             await MainActor.run {
                 guard let self, token == self.loadToken, let decoded else { return }
                 withAnimation(.easeInOut(duration: 1.2)) {
                     self.image = NSImage(cgImage: decoded, size: NSSize(width: decoded.width, height: decoded.height))
                     self.imageID = url.path
                     self.brightness = light
+                    self.tint = color
                 }
             }
         }
+    }
+
+    /// The picture's most colourful common shade, toned down to sit behind white text:
+    /// pixels are averaged weighted by saturation, so a grey background doesn't win
+    /// over the coloured subject.
+    static func mainColor(_ image: CGImage) -> Color {
+        let side = 24
+        var pixels = [UInt8](repeating: 0, count: side * side * 4)
+        guard let context = CGContext(data: &pixels, width: side, height: side, bitsPerComponent: 8, bytesPerRow: side * 4,
+                                      space: CGColorSpaceCreateDeviceRGB(),
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return .gray }
+        context.draw(image, in: CGRect(x: 0, y: 0, width: side, height: side))
+        var r = 0.0, g = 0.0, b = 0.0, total = 0.0
+        for i in stride(from: 0, to: pixels.count, by: 4) {
+            let pr = Double(pixels[i]) / 255, pg = Double(pixels[i + 1]) / 255, pb = Double(pixels[i + 2]) / 255
+            let maxC = max(pr, pg, pb), minC = min(pr, pg, pb)
+            let weight = (maxC - minC) + 0.05
+            r += pr * weight; g += pg * weight; b += pb * weight; total += weight
+        }
+        let ns = NSColor(srgbRed: r / total, green: g / total, blue: b / total, alpha: 1)
+        var h: CGFloat = 0, s: CGFloat = 0, v: CGFloat = 0
+        ns.getHue(&h, saturation: &s, brightness: &v, alpha: nil)
+        return Color(hue: h, saturation: min(0.4, s * 1.1 + 0.05), brightness: 0.26)
     }
 
     /// Draws the image into one pixel and reads its luma.
@@ -217,6 +246,20 @@ extension EnvironmentValues {
     var wallpaperCanvas: CGSize {
         get { self[WallpaperCanvasKey.self] }
         set { self[WallpaperCanvasKey.self] = newValue }
+    }
+}
+
+/// Background for the sidebar, player bar and queue over a wallpaper: their slice of
+/// the blurred wallpaper under a wash of its own main colour.
+struct PanelBackground: View {
+    @Environment(WallpaperStore.self) private var wallpaper
+
+    var body: some View {
+        ZStack {
+            WallpaperBackground()
+            (wallpaper.tint ?? .black).opacity(0.6)
+        }
+        .allowsHitTesting(false)
     }
 }
 

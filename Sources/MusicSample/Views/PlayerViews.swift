@@ -19,10 +19,7 @@ struct PlayerBar: View {
         .background {
             if wallpaper.isActive {
                 // Its slice of the wallpaper, under the same bar material.
-                ZStack {
-                    WallpaperBackground()
-                    Rectangle().fill(.bar)
-                }
+                PanelBackground()
             } else {
                 Rectangle().fill(.bar)
             }
@@ -333,7 +330,7 @@ struct QueueRow: View {
             Artwork(hue: song.hue, url: song.artwork, side: 36, radius: 4, symbol: nil)
                 .overlay { if current { PlayingIndicator() } }
             VStack(alignment: .leading, spacing: 1) {
-                Text(song.title).lineLimit(1).foregroundStyle(current ? Color.accentColor : Color.primary)
+                Text(song.title).lineLimit(1).fontWeight(current ? .semibold : .regular)
                 Text(song.artist).font(.caption).foregroundStyle(.secondary).lineLimit(1)
             }
             Spacer()
@@ -525,8 +522,8 @@ struct NowPlayingView: View {
                     // so the picture never wins over the text.
                     .background {
                         if wallpaper.isActive {
-                            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                                .fill(.regularMaterial)
+                            PanelBackground()
+                                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
                                 .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous)
                                     .strokeBorder(.white.opacity(0.08)))
                         }
@@ -583,7 +580,7 @@ struct NowPlayingQueue: View {
                     Text("Now Playing").font(.headline).foregroundStyle(.secondary).padding(.horizontal, 8)
                     QueueRow(song: s, current: true)
                         .padding(8)
-                        .background(RoundedRectangle(cornerRadius: 8).fill(Color.accentColor.opacity(0.18)))
+                        .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.12)))
                 }
                 Text("Up Next").font(.headline).foregroundStyle(.secondary).padding(.horizontal, 8).padding(.top, 12)
                 if player.upNext.isEmpty {

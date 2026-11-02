@@ -133,11 +133,7 @@ struct RootView: View {
                         SidebarView()
                             .frame(width: 230)
                             .background {
-                                ZStack {
-                                    WallpaperBackground()
-                                    Rectangle().fill(.ultraThinMaterial)
-                                }
-                                .ignoresSafeArea()
+                                PanelBackground().ignoresSafeArea()
                             }
                             .environment(\.colorScheme, .dark)
                         // A quiet 1-pt hairline, as in anicat: the text colour at 10%.
@@ -216,7 +212,7 @@ struct RootView: View {
             if let song = library.home.first?.songs.first { player.prefetch(song) }
         }
         // Lyrics load with every song, so Now Playing knows up front whether there are any.
-        .onChange(of: player.current?.id) { wallpaper.songChanged(cover: player.current?.artwork) }
+        .onChange(of: player.current?.id, initial: true) { wallpaper.songChanged(cover: player.current?.artwork) }
         .task(id: player.current?.id) {
             guard let song = player.current else { return }
             for _ in 0..<15 where player.duration <= 0 { try? await Task.sleep(for: .milliseconds(200)) }

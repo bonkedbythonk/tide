@@ -124,7 +124,7 @@ enum SleepTimer: String, CaseIterable, Identifiable {
     @ObservationIgnored private var awaitingFile = false
     /// mpv's real position, kept up to date even while another load is resolving.
     @ObservationIgnored private var livePosition: TimeInterval = 0
-    @ObservationIgnored private let resolver = StreamResolver()
+    @ObservationIgnored let resolver = StreamResolver()
     @ObservationIgnored private var nowPlaying: NowPlayingCenter?
     @ObservationIgnored private var loadToken = 0
     @ObservationIgnored private var settingVideoForNewQueue = false
@@ -409,6 +409,21 @@ enum SleepTimer: String, CaseIterable, Identifiable {
 
     func resume(_ song: Song, at time: TimeInterval) {
         play(song, in: [song], at: time)
+    }
+
+    /// Playback handed over from the iPhone app: its queue in its order (no reshuffle),
+    /// from the same spot.
+    func take(_ list: [Song], at queueIndex: Int, from start: TimeInterval) {
+        guard list.indices.contains(queueIndex) else { return }
+        finishCrossfade()
+        crossfading = false
+        settingVideoForNewQueue = true
+        videoMode = false
+        settingVideoForNewQueue = false
+        skipForward = true
+        queue = list
+        index = queueIndex
+        load(at: start)
     }
 
     func jump(to queueIndex: Int) {

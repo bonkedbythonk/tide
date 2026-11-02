@@ -29,6 +29,8 @@ struct SidebarView: View {
             }
         }
         .listStyle(.sidebar)
+        // Let the panel colour behind show, not the system sidebar grey.
+        .scrollContentBackground(.hidden)
         // Clear of the window buttons, now that there's no title bar.
         .safeAreaPadding(.top, 30)
         .safeAreaInset(edge: .bottom) {

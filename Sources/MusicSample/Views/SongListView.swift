@@ -41,6 +41,7 @@ struct SongListView: View {
     @Environment(Library.self) private var library
     @Environment(Player.self) private var player
     @Environment(WallpaperStore.self) private var wallpaper
+    @Environment(Router.self) private var router
     let page: PageData
     let songs: [Song]
     let playlistID: String?
@@ -100,14 +101,25 @@ struct SongListView: View {
                         .modifier(PanelRow(index: index, count: suggestions.count, on: wallpaper.isActive))
                 }
             }
+            ForEach(page.shelves ?? []) { shelf in
+                VStack(alignment: .leading, spacing: 12) {
+                    Text(shelf.title).font(.title3.bold()).padding(.horizontal, 32)
+                    ShelfContent(shelf: shelf)
+                }
+                .padding(.top, 22)
+                .listRowInsets(EdgeInsets())
+                .listRowBackground(Color.clear)
+                .listRowSeparator(.hidden)
+            }
         }
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
         .environment(\.defaultMinListRowHeight, 1)
         .opacity(appeared ? 1 : 0)
-        .offset(y: appeared ? 0 : 28)
+        .offset(y: appeared ? 0 : 8)
         .onAppear {
-            withAnimation(.spring(duration: 0.5, bounce: 0.18)) { appeared = true }
+            // Quick: a long entrance read as the page loading slowly.
+            withAnimation(.easeOut(duration: 0.18)) { appeared = true }
         }
         // Resolve the first songs now, so Play starts without waiting on yt-dlp.
         .task(id: page.id) { songs.prefix(2).forEach { player.prefetch($0) } }
@@ -168,6 +180,12 @@ struct SongListView: View {
                         Label("Shuffle", systemImage: "shuffle")
                     }
                     .buttonStyle(PillButtonStyle(prominent: false))
+                    if let allSongsID = page.allSongsID {
+                        Button { router.go(.page(allSongsID)) } label: {
+                            Label("All Songs", systemImage: "music.note.list")
+                        }
+                        .buttonStyle(PillButtonStyle(prominent: false))
+                    }
                     do {
                         Menu {
                             Picker("Sort by", selection: $sortOrder) {
@@ -246,8 +264,7 @@ struct SearchView: View {
     @Environment(Library.self) private var library
     @Environment(Router.self) private var router
     @State private var query = ""
-    @State private var songs: [Song] = []
-    @State private var items: [MediaItem] = []
+    @State private var shelves: [HomeShelf] = []
     @State private var searching = false
     @FocusState private var focused: Bool
 
@@ -266,13 +283,11 @@ struct SearchView: View {
                 .background(RoundedRectangle(cornerRadius: 10).fill(Color.primary.opacity(0.06)))
                 .padding(.horizontal, 24)
 
-                if !songs.isEmpty {
-                    Text("Songs").font(.title2.bold()).padding(.horizontal, 24)
-                    SongGrid(songs: Array(songs.prefix(16)))
-                }
-                if !items.isEmpty {
-                    Text("Albums, artists and playlists").font(.title2.bold()).padding(.horizontal, 24)
-                    Shelf { ForEach(items) { MediaItemCard(item: $0) } }
+                ForEach(shelves) { shelf in
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text(shelf.title).font(.title2.bold()).padding(.horizontal, 24)
+                        ShelfContent(shelf: shelf)
+                    }
                 }
             }
             .padding(.top, 50)
@@ -286,15 +301,15 @@ struct SearchView: View {
         }
         .task(id: query) {
             let q = query.trimmingCharacters(in: .whitespaces)
-            guard !q.isEmpty else { songs = []; items = []; searching = false; return }
-            try? await Task.sleep(for: .milliseconds(250))
+            guard !q.isEmpty else { shelves = []; searching = false; return }
+            // Five requests per search, so wait for a pause in typing.
+            try? await Task.sleep(for: .milliseconds(350))
             guard !Task.isCancelled else { return }
             searching = true
             defer { searching = false }
             let result = await library.search(q)
             guard !Task.isCancelled else { return }
-            songs = result.songs
-            items = result.items
+            shelves = result
         }
     }
 }
@@ -359,7 +374,7 @@ struct SongRow: View {
                     .font(.system(size: 13.5, weight: playing ? .bold : .medium))
                     .foregroundStyle(item.isSuggestion && !playing ? Color.secondary : Color.primary)
                     .lineLimit(1)
-                Text(item.artist).font(.callout).foregroundStyle(.secondary).lineLimit(1)
+                ArtistLink(song: item.song).font(.callout).foregroundStyle(.secondary).lineLimit(1)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             if let addTo {

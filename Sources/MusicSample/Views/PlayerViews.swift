@@ -63,7 +63,7 @@ struct NowPlayingInfo: View {
                         } else if player.isLoading {
                             Text("Loading…").font(.subheadline).foregroundStyle(.secondary)
                         } else {
-                            Text(s.artist).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+                            ArtistLink(song: s).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
                         }
                     }
                 }
@@ -488,7 +488,11 @@ struct NowPlayingView: View {
                                    selection: Binding(get: { player.videoMode }, set: { player.videoMode = $0 }))
                         VStack(spacing: 4) {
                             Text(s.title).font(.title.bold()).lineLimit(1)
-                            Text(s.album.isEmpty ? s.artist : "\(s.artist) — \(s.album)").font(.title3).foregroundStyle(.secondary).lineLimit(1)
+                            HStack(spacing: 0) {
+                                ArtistLink(song: s)
+                                if !s.album.isEmpty { Text(" — \(s.album)") }
+                            }
+                            .font(.title3).foregroundStyle(.secondary).lineLimit(1)
                         }
                         .id(s.id)
                         .transition(.opacity)

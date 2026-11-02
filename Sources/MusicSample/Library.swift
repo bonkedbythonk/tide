@@ -145,12 +145,30 @@ import SwiftUI
         (pages[pageID]?.songs ?? []) + (localAdds[pageID] ?? [])
     }
 
+    /// One shelf per kind of result, all asked for at once.
     @MainActor
-    func search(_ query: String) async -> (songs: [Song], items: [MediaItem]) {
-        guard let json = try? await client.search(query) else { return ([], []) }
-        let result = YTParse.search(json)
-        result.songs.forEach(remember)
-        return result
+    func search(_ query: String) async -> [HomeShelf] {
+        let shelves = await withTaskGroup(of: (SearchKind, [ShelfItem]).self) { group in
+            for kind in SearchKind.allCases {
+                group.addTask { [client] in
+                    guard let json = try? await client.search(query, params: kind.rawValue) else { return (kind, []) }
+                    let result = YTParse.search(json)
+                    let items: [ShelfItem] = switch kind {
+                    case .songs: result.songs.map { .song($0, video: false) }
+                    case .videos: result.songs.map { .song($0, video: true) }
+                    default: result.items.map { .media($0) }
+                    }
+                    return (kind, items)
+                }
+            }
+            var byKind: [SearchKind: [ShelfItem]] = [:]
+            for await (kind, items) in group { byKind[kind] = items }
+            return SearchKind.allCases.compactMap { kind in
+                byKind[kind].flatMap { $0.isEmpty ? nil : HomeShelf(title: kind.title, items: $0) }
+            }
+        }
+        shelves.forEach { $0.songs.forEach(remember) }
+        return shelves
     }
 
     @MainActor

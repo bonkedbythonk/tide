@@ -133,7 +133,30 @@ final class YTClient {
         return try await call("browse", ["continuation": token])
     }
 
-    func search(_ query: String) async throws -> JSON { try await call("search", ["query": query]) }
+    /// `params` picks one kind of result (see `SearchKind`); about 20 come back
+    /// instead of the 3 or so per kind of a plain search.
+    func search(_ query: String, params: String) async throws -> JSON {
+        try await call("search", ["query": query, "params": params])
+    }
+}
+
+/// YouTube Music's search filters, as the web app sends them.
+enum SearchKind: String, CaseIterable {
+    case songs = "EgWKAQIIAWoMEA4QChADEAQQCRAF"
+    case videos = "EgWKAQIQAWoMEA4QChADEAQQCRAF"
+    case artists = "EgWKAQIgAWoMEA4QChADEAQQCRAF"
+    case albums = "EgWKAQIYAWoMEA4QChADEAQQCRAF"
+    case playlists = "EgeKAQQoAEABagwQDhAKEAMQBBAJEAU="
+
+    var title: String {
+        switch self {
+        case .songs: "Songs"
+        case .videos: "Videos"
+        case .artists: "Artists"
+        case .albums: "Albums"
+        case .playlists: "Playlists"
+        }
+    }
 }
 
 /// Pulls songs, cards and shelves out of InnerTube responses. Searches by renderer name
@@ -214,6 +237,7 @@ enum YTParse {
         // Each column reads like "Song • Artist, Other & Third • Album • 3:45": split on " • "
         // and classify each segment as a whole, so unlinked featured artists aren't lost.
         var artist = ""
+        var artistID: String?
         var plain: [String] = []
         var album = ""
         var albumID: String?
@@ -232,7 +256,12 @@ enum YTParse {
                 } else if let s = seconds(t) {
                     duration = s
                 } else if types.contains("MUSIC_PAGE_TYPE_ARTIST") || types.contains("MUSIC_PAGE_TYPE_USER_CHANNEL") {
-                    if artist.isEmpty { artist = t }
+                    if artist.isEmpty {
+                        artist = t
+                        artistID = segment.lazy.compactMap {
+                            dig($0, "navigationEndpoint", "browseEndpoint", "browseId") as? String
+                        }.first
+                    }
                 } else if !typeWords.contains(t), !t.contains(" plays"), !t.contains(" views") {
                     plain.append(t)
                 }
@@ -249,7 +278,7 @@ enum YTParse {
             duration = s
         }
         return Song(id: videoId, title: title, artist: artist, album: album, albumID: albumID,
-                    duration: duration, artwork: thumbnail(r["thumbnail"]).url)
+                    artistID: artistID, duration: duration, artwork: thumbnail(r["thumbnail"]).url)
     }
 
     /// A card (musicTwoRowItemRenderer): album, playlist, mix, artist or a single video.
@@ -272,8 +301,9 @@ enum YTParse {
             return .media(MediaItem(id: id, title: title, subtitle: subtitle, artwork: thumb.url, kind: kind))
         }
         if let videoId = dig(r, "navigationEndpoint", "watchEndpoint", "videoId") as? String {
-            let artist = subtitleRuns.first { pageType($0) == "MUSIC_PAGE_TYPE_ARTIST" }?["text"] as? String
-            let song = Song(id: videoId, title: title, artist: artist ?? subtitle, album: "", albumID: nil,
+            let artistRun = subtitleRuns.first { pageType($0) == "MUSIC_PAGE_TYPE_ARTIST" }
+            let song = Song(id: videoId, title: title, artist: artistRun?["text"] as? String ?? subtitle, album: "", albumID: nil,
+                            artistID: artistRun.flatMap { dig($0, "navigationEndpoint", "browseEndpoint", "browseId") as? String },
                             duration: 0, artwork: thumb.url)
             return .song(song, video: thumb.wide)
         }
@@ -352,6 +382,10 @@ enum YTParse {
         }
         var data = PageData(id: id, title: title, subtitle: subtitle, artwork: art, songs: list)
         data.suggestions = suggestionShelf.map(songs)
+        if id.hasPrefix("UC") {
+            data.shelves = shelves(json)
+            data.allSongsID = mainShelf.flatMap { dig($0, "bottomEndpoint", "browseEndpoint", "browseId") as? String }
+        }
         // Dictionary order is random, so pick the section list by its continuation, not position.
         let sectionList = findAll("sectionListRenderer", in: json).first { $0["continuations"] != nil }
         return ParsedPage(

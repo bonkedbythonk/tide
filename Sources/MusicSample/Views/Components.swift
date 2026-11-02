@@ -177,6 +177,26 @@ struct DragPreview: View {
     }
 }
 
+/// A song's artist name that opens the artist's page, underlined on hover.
+/// Plain text when YouTube gave no artist link.
+struct ArtistLink: View {
+    @Environment(Router.self) private var router
+    let song: Song
+    @State private var hovering = false
+
+    var body: some View {
+        if let id = song.artistID {
+            Text(song.artist)
+                .underline(hovering)
+                .onHover { hovering = $0 }
+                .onTapGesture { router.go(.page(id)) }
+                .help("Go to \(song.artist)")
+        } else {
+            Text(song.artist)
+        }
+    }
+}
+
 /// Right-click menu shared by every song row.
 struct SongMenu: View {
     @Environment(Library.self) private var library
@@ -199,9 +219,10 @@ struct SongMenu: View {
         if let playlistID {
             Button("Remove from This Playlist") { library.remove(ids, from: playlistID) }
         }
-        if songs.count == 1, let albumID = songs.first?.albumID {
+        if songs.count == 1, let song = songs.first, song.albumID != nil || song.artistID != nil {
             Divider()
-            Button("Go to Album") { router.go(.page(albumID)) }
+            if let artistID = song.artistID { Button("Go to Artist") { router.go(.page(artistID)) } }
+            if let albumID = song.albumID { Button("Go to Album") { router.go(.page(albumID)) } }
         }
     }
 }

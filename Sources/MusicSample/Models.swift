@@ -7,6 +7,8 @@ struct Song: Identifiable, Hashable, Codable {
     let artist: String
     var album: String
     var albumID: String?
+    /// The artist's channel ("UC…"), when YouTube links one.
+    var artistID: String?
     let duration: TimeInterval
     var artwork: URL?
 
@@ -66,6 +68,10 @@ struct PageData: Codable {
     var songs: [Song]
     /// YouTube's suggested songs for a playlist, shown separately, never mixed in.
     var suggestions: [Song]?
+    /// An artist's albums, singles, videos and so on, under the top songs.
+    var shelves: [HomeShelf]?
+    /// The playlist holding all of an artist's songs.
+    var allSongsID: String?
 }
 
 struct LyricLine: Hashable, Codable {

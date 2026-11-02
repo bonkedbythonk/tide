@@ -129,7 +129,7 @@ struct VideoFullscreenView: View {
             HStack(alignment: .bottom) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(s.title).font(.title2.bold())
-                    Text(s.artist).font(.title3).foregroundStyle(.secondary)
+                    ArtistLink(song: s).font(.title3).foregroundStyle(.secondary)
                 }
                 Spacer()
                 HStack(spacing: 18) {

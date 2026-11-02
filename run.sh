@@ -21,9 +21,6 @@ cat > $app/Contents/Info.plist <<'EOF'
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>LSMinimumSystemVersion</key><string>15.0</string>
 <key>NSHighResolutionCapable</key><true/>
-<!-- The Tide iPhone app finds this Mac with Bonjour and connects over the local network. -->
-<key>NSLocalNetworkUsageDescription</key><string>Tide talks to the Tide iPhone app on your local network.</string>
-<key>NSBonjourServices</key><array><string>_tide._tcp</string><string>_tide-audio._tcp</string></array>
 </dict></plist>
 EOF
 open $app

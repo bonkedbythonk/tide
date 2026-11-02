@@ -4,8 +4,7 @@ import SwiftUI
 @main
 struct MusicSampleApp: App {
     @State private var library = Library()
-    @State private var player: Player
-    @State private var remote: RemoteServer
+    @State private var player = Player()
     @State private var router = Router()
     @State private var home = HomeConfig()
     @State private var lyrics = LyricsStore()
@@ -18,9 +17,6 @@ struct MusicSampleApp: App {
     }
 
     init() {
-        let player = Player()
-        _player = State(initialValue: player)
-        _remote = State(initialValue: RemoteServer(player: player))
         NSApplication.shared.setActivationPolicy(.regular)
         _ = ResponsiveScrollingPatch.applyOnce
     }
@@ -30,7 +26,6 @@ struct MusicSampleApp: App {
             RootView()
                 .environment(library)
                 .environment(player)
-                .environment(remote)
                 .environment(router)
                 .environment(home)
                 .environment(lyrics)

@@ -124,7 +124,7 @@ enum SleepTimer: String, CaseIterable, Identifiable {
     @ObservationIgnored private var awaitingFile = false
     /// mpv's real position, kept up to date even while another load is resolving.
     @ObservationIgnored private var livePosition: TimeInterval = 0
-    @ObservationIgnored let resolver = StreamResolver()
+    @ObservationIgnored private let resolver = StreamResolver()
     @ObservationIgnored private var nowPlaying: NowPlayingCenter?
     @ObservationIgnored private var loadToken = 0
     @ObservationIgnored private var settingVideoForNewQueue = false
@@ -407,25 +407,6 @@ enum SleepTimer: String, CaseIterable, Identifiable {
         play(list[0], in: list)
     }
 
-    func resume(_ song: Song, at time: TimeInterval) {
-        play(song, in: [song], at: time)
-    }
-
-    /// Playback handed over from the iPhone app: its queue in its order (no reshuffle),
-    /// from the same spot.
-    func take(_ list: [Song], at queueIndex: Int, from start: TimeInterval) {
-        guard list.indices.contains(queueIndex) else { return }
-        finishCrossfade()
-        crossfading = false
-        settingVideoForNewQueue = true
-        videoMode = false
-        settingVideoForNewQueue = false
-        skipForward = true
-        queue = list
-        index = queueIndex
-        load(at: start)
-    }
-
     func jump(to queueIndex: Int) {
         guard queue.indices.contains(queueIndex) else { return }
         finishCrossfade()
@@ -597,7 +578,6 @@ enum SleepTimer: String, CaseIterable, Identifiable {
     var hidden: Set<String> = Set(UserDefaults.standard.stringArray(forKey: "homeHidden") ?? []) {
         didSet { UserDefaults.standard.set(Array(hidden), forKey: "homeHidden") }
     }
-    var showContinueBanner = true
 
     /// Sections the user hasn't placed yet keep YouTube's order, after the placed ones.
     func arrange(_ shelves: [HomeShelf]) -> [HomeShelf] {
@@ -616,7 +596,6 @@ enum SleepTimer: String, CaseIterable, Identifiable {
     func reset() {
         order = []
         hidden = []
-        showContinueBanner = true
     }
 }
 

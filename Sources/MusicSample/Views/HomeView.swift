@@ -21,7 +21,6 @@ struct HomeView: View {
                 }
                 .padding(.horizontal, 24)
 
-                ContinueBanner().padding(.horizontal, 24)
 
                 ForEach(shelves) { shelf in
                     VStack(alignment: .leading, spacing: 12) {
@@ -131,36 +130,6 @@ struct SectionHeader: View {
     }
 }
 
-/// What the iPhone app is playing by itself, with a button to carry on here.
-struct ContinueBanner: View {
-    @Environment(RemoteServer.self) private var remote
-    @Environment(HomeConfig.self) private var home
-
-    var body: some View {
-        if home.showContinueBanner, let state = remote.phone, let link = state.song {
-            let song = Song(link)
-            HStack(spacing: 12) {
-                Image(systemName: "iphone").font(.title2).foregroundStyle(Color.accentColor)
-                Artwork(hue: song.hue, url: song.artwork, side: 40, radius: 5)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Continue from \(remote.phoneName)").font(.headline)
-                    Text("\(song.title) — \(song.artist) · " + (state.playing ? "playing" : "paused at \(formatTime(state.position))"))
-                        .font(.subheadline).foregroundStyle(.secondary)
-                }
-                Spacer()
-                Button("Resume Here") { remote.pullFromPhone() }
-                    .buttonStyle(PillButtonStyle(prominent: true))
-                Button { withAnimation { home.showContinueBanner = false } } label: {
-                    Image(systemName: "xmark")
-                }
-                .buttonStyle(.borderless)
-            }
-            .padding(12)
-            .background(RoundedRectangle(cornerRadius: 12).fill(Color.primary.opacity(0.05)))
-        }
-    }
-}
-
 struct CustomizeHomeSheet: View {
     @Environment(HomeConfig.self) private var home
     @Environment(\.dismiss) private var dismiss
@@ -188,7 +157,6 @@ struct CustomizeHomeSheet: View {
                 .onMove { home.order.move(fromOffsets: $0, toOffset: $1) }
             }
             .frame(height: 380)
-            Toggle("Show \"Continue from iPhone\"", isOn: $home.showContinueBanner)
             HStack {
                 Button("Reset") { home.reset() }
                 Spacer()

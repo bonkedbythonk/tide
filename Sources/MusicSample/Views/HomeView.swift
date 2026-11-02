@@ -69,11 +69,11 @@ struct ShelfContent: View {
                                   width: video ? 270 : 165, wide: video,
                                   symbol: video ? "play.rectangle.fill" : "music.note",
                                   open: {
-                                      player.play(s, in: videos, video: video)
+                                      player.play(s, in: videos)
                                       if video { withAnimation(.snappy) { router.showNowPlaying = true } }
                                   },
-                                  play: { player.play(s, in: videos, video: video) },
-                                  prefetch: { player.prefetch(s, video: video) })
+                                  play: { player.play(s, in: videos) },
+                                  prefetch: { player.prefetch(s, video: player.prefersVideo) })
                     case .media(let m):
                         MediaItemCard(item: m)
                     }
@@ -112,7 +112,7 @@ struct SectionHeader: View {
             Text(shelf.title).font(.title2.bold())
             Spacer()
             if !shelf.songs.isEmpty {
-                Button { player.playAll(shelf.songs, video: shelf.isVideos) } label: {
+                Button { player.playAll(shelf.songs) } label: {
                     Label("Play all", systemImage: "play.fill")
                 }
                 .buttonStyle(PillButtonStyle(prominent: false))

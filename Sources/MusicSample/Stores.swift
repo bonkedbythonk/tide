@@ -63,7 +63,10 @@ enum SleepTimer: String, CaseIterable, Identifiable {
     /// reloads the track as the other kind, from the same moment.
     var videoMode = false {
         didSet {
-            guard oldValue != videoMode, !settingVideoForNewQueue, !needsLoad, let song = current else { return }
+            guard oldValue != videoMode, !settingVideoForNewQueue else { return }
+            // Your own switch is remembered: new songs start the way you last chose.
+            prefersVideo = videoMode
+            guard !needsLoad, let song = current else { return }
             // A song and its video share one timeline, so the audio keeps playing and
             // only the picture is added or hidden. Reloading the track cut the sound out.
             guard !isLoading, lastError == nil else {
@@ -71,6 +74,10 @@ enum SleepTimer: String, CaseIterable, Identifiable {
             }
             if videoMode { attachVideo(to: song) } else { engine.hideVideo() }
         }
+    }
+    /// Songs start as music videos only after you last switched to video yourself.
+    @ObservationIgnored private(set) var prefersVideo = Prefs.bool("prefersVideo") {
+        didSet { Prefs.set(prefersVideo, "prefersVideo") }
     }
     /// The picture is on its way for a song that's already playing.
     var videoLoading = false
@@ -376,7 +383,7 @@ enum SleepTimer: String, CaseIterable, Identifiable {
         Task { await resolver.prefetch([song.id], video: video, maxHeight: height) }
     }
 
-    func play(_ song: Song, in list: [Song], video: Bool = false, at start: TimeInterval = 0) {
+    func play(_ song: Song, in list: [Song], at start: TimeInterval = 0) {
         var list = list.isEmpty ? [song] : list
         var first = list.firstIndex(of: song) ?? 0
         if shuffle {
@@ -386,7 +393,7 @@ enum SleepTimer: String, CaseIterable, Identifiable {
         finishCrossfade()
         crossfading = false
         settingVideoForNewQueue = true
-        videoMode = video
+        videoMode = prefersVideo
         settingVideoForNewQueue = false
         skipForward = true
         queue = list
@@ -394,10 +401,10 @@ enum SleepTimer: String, CaseIterable, Identifiable {
         load(at: start)
     }
 
-    func playAll(_ songs: [Song], shuffled: Bool = false, video: Bool = false) {
+    func playAll(_ songs: [Song], shuffled: Bool = false) {
         guard !songs.isEmpty else { return }
         let list = shuffled ? songs.shuffled() : songs
-        play(list[0], in: list, video: video)
+        play(list[0], in: list)
     }
 
     func resume(_ song: Song, at time: TimeInterval) {
@@ -415,6 +422,11 @@ enum SleepTimer: String, CaseIterable, Identifiable {
 
     func toggle() {
         guard current != nil else { return }
+        if needsLoad {
+            settingVideoForNewQueue = true
+            videoMode = prefersVideo
+            settingVideoForNewQueue = false
+        }
         if lastError != nil || needsLoad { return load(at: position) }
         finishCrossfade()
         isPlaying.toggle()

@@ -42,7 +42,7 @@ struct NowPlayingScreen: View {
             if remote.target == .phone, let error = remote.local.error {
                 Text(error).font(.footnote).foregroundStyle(.red).multilineTextAlignment(.center)
             } else if remote.target == .phone, remote.local.embedded {
-                Text("Playing through YouTube's player because your Mac can't be reached. Keep Tide open; playing in the background needs your Mac.")
+                Text("Playing through YouTube Music's web player because your Mac can't be reached.")
                     .font(.footnote).foregroundStyle(.secondary).multilineTextAlignment(.center)
             }
             Spacer(minLength: 0)

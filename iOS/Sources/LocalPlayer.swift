@@ -4,20 +4,20 @@ import Network
 
 /// Playback on the phone. Audio comes from the Mac as an m4a file, over Wi-Fi at
 /// home or Tailscale away: the phone never resolves YouTube streams itself and
-/// never fetches video. Without the Mac it falls back to YouTube's embedded
-/// player, which only plays while Tide is open.
+/// never fetches video. Without the Mac it plays through YouTube Music's own web
+/// player, signed in with your account.
 @Observable final class LocalPlayer {
     var queue: [LinkSong] = []
     var index = 0
     var playing = false
     var loading = false
     var error: String?
-    /// Playing through YouTube's embedded player instead of the Mac.
+    /// Playing through YouTube Music's web player instead of the Mac.
     var embedded = false
     var volume = 1.0 {
         didSet {
             player.volume = Float(volume)
-            embed.setVolume(volume)
+            web.setVolume(volume)
         }
     }
 
@@ -25,7 +25,7 @@ import Network
     @ObservationIgnored var endpoint: NWEndpoint?
     /// Something changed that the Mac should hear about (its "Continue from iPhone").
     @ObservationIgnored var onChange: (() -> Void)?
-    @ObservationIgnored let embed = EmbedPlayer()
+    @ObservationIgnored let web = WebPlayer()
     @ObservationIgnored private let player = AVPlayer()
     @ObservationIgnored private var embedTime: TimeInterval = 0
     @ObservationIgnored private var token = 0
@@ -46,13 +46,14 @@ import Network
     init() {
         NotificationCenter.default.addObserver(forName: AVPlayerItem.didPlayToEndTimeNotification, object: nil,
                                                queue: .main) { [weak self] _ in self?.next() }
-        embed.onTime = { [weak self] t in self?.embedTime = t }
-        embed.onEnded = { [weak self] in self?.next() }
-        embed.onError = { [weak self] _ in
-            guard let self else { return }
-            self.playing = false
-            self.error = "YouTube doesn't allow this song outside its app. Connect to your Mac to play it."
-            self.changed()
+        web.onReport = { [weak self] r in
+            guard let self, self.embedded else { return }
+            self.embedTime = r.time
+            // The page moves through the queue by itself; follow it.
+            let moved = r.index != self.index || r.paused == self.playing
+            self.index = r.index
+            self.playing = !r.paused
+            if moved { self.changed() }
         }
         let center = MPRemoteCommandCenter.shared()
         center.togglePlayPauseCommand.addTarget { [weak self] _ in self?.toggle(); return .success }
@@ -100,14 +101,14 @@ import Network
     }
 
     func pause() {
-        embedded ? embed.pause() : player.pause()
+        embedded ? web.pause() : player.pause()
         playing = false
         changed()
     }
 
     private func resume() {
         if embedded {
-            embed.play()
+            web.play()
         } else {
             try? AVAudioSession.sharedInstance().setActive(true)
             player.play()
@@ -130,7 +131,7 @@ import Network
 
     func seek(_ t: TimeInterval) {
         if embedded {
-            embed.seek(t)
+            web.seek(t)
             embedTime = t
         } else {
             player.seek(to: CMTime(seconds: t, preferredTimescale: 600))
@@ -138,7 +139,7 @@ import Network
         changed()
     }
 
-    /// The song's file, cached or from the Mac; without the Mac, the embedded player.
+    /// The song's file, cached or from the Mac; without the Mac, the web player.
     /// Then the next song is fetched ahead when that costs no mobile data.
     private func load(at start: TimeInterval = 0) {
         guard let song = current else { return }
@@ -147,7 +148,7 @@ import Network
         loading = true
         error = nil
         player.pause()
-        embed.stop()
+        web.stop()
         changed()
         Task { @MainActor in
             do {
@@ -166,7 +167,7 @@ import Network
                 player.replaceCurrentItem(with: nil)
                 embedded = true
                 embedTime = start
-                embed.load(song.id, at: start)
+                web.load(queue.map(\.id), index: index, at: start)
                 loading = false
                 playing = true
                 changed()

@@ -48,11 +48,11 @@ struct Root: View {
                 .sheet(isPresented: $showPlayer) { NowPlayingScreen() }
             }
         }
-        // The embedded player's web view has to be in the window to play; it sits
-        // under the app's background.
+        // The web player's view has to be in the window to play; it sits under
+        // the app's background.
         .background {
             ZStack {
-                EmbedHost(player: remote.local.embed).frame(width: 200, height: 200)
+                WebPlayerHost(player: remote.local.web).frame(width: 200, height: 200)
                 Color(.systemBackground).ignoresSafeArea()
             }
             .allowsHitTesting(false)

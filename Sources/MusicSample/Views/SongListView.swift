@@ -39,6 +39,7 @@ struct SongRowItem: Identifiable {
 struct SongListView: View {
     @Environment(Library.self) private var library
     @Environment(Player.self) private var player
+    @Environment(WallpaperStore.self) private var wallpaper
     let page: PageData
     let songs: [Song]
     let playlistID: String?
@@ -155,6 +156,13 @@ struct SongListView: View {
                 ClickToPlay.arm { play(s, visibleSongs, suggestedSongs) }
             }
             .scrollContentBackground(.hidden)
+            // Over a wallpaper the list sits on a material: never text straight on a picture.
+            .background {
+                if wallpaper.isActive {
+                    RoundedRectangle(cornerRadius: 12, style: .continuous).fill(.regularMaterial)
+                        .padding(.horizontal, 8)
+                }
+            }
             .opacity(appeared ? 1 : 0)
             .offset(y: appeared ? 0 : 28)
         }

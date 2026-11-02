@@ -402,6 +402,7 @@ struct LyricsView: View {
 struct NowPlayingView: View {
     @Environment(Player.self) private var player
     @Environment(Router.self) private var router
+    @Environment(WallpaperStore.self) private var wallpaper
     @Environment(LyricsStore.self) private var lyrics
     @State private var appeared = false
     /// Set when Now Playing moved to Up Next because a song had no lyrics, so it
@@ -421,13 +422,22 @@ struct NowPlayingView: View {
         @Bindable var router = router
         ZStack(alignment: .topLeading) {
             if let s = player.current {
-                LinearGradient(
-                    colors: [Color(hue: s.hue, saturation: 0.6, brightness: 0.55), Color(hue: s.hue, saturation: 0.4, brightness: 0.15)],
-                    startPoint: .top, endPoint: .bottom
-                )
-                .overlay(.ultraThinMaterial)
-                .ignoresSafeArea()
-                .animation(.easeInOut(duration: 0.6), value: s.id)
+                if wallpaper.isActive {
+                    // Now Playing is where the wallpaper shows sharp; darker toward the
+                    // bottom and behind the lyrics so the text stays readable.
+                    WallpaperBackground(sharp: true)
+                        .overlay(LinearGradient(colors: [.clear, .black.opacity(0.6)], startPoint: .center, endPoint: .bottom))
+                        .overlay(LinearGradient(colors: [.clear, .black.opacity(0.45)], startPoint: .center, endPoint: .trailing))
+                        .ignoresSafeArea()
+                } else {
+                    LinearGradient(
+                        colors: [Color(hue: s.hue, saturation: 0.6, brightness: 0.55), Color(hue: s.hue, saturation: 0.4, brightness: 0.15)],
+                        startPoint: .top, endPoint: .bottom
+                    )
+                    .overlay(.ultraThinMaterial)
+                    .ignoresSafeArea()
+                    .animation(.easeInOut(duration: 0.6), value: s.id)
+                }
 
                 HStack(alignment: .center, spacing: 48) {
                     VStack(spacing: 18) {

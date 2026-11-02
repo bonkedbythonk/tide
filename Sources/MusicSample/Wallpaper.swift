@@ -54,12 +54,18 @@ import SwiftUI
     var imagePath = Prefs.string("wallpaperImage") {
         didSet { Prefs.set(imagePath ?? "", "wallpaperImage"); refresh() }
     }
-    var shuffle = Shuffle(rawValue: Prefs.string("wallpaperShuffle") ?? "") ?? .everySong {
+    // Changing on every track turns into flicker; a timer reads calmer.
+    var shuffle = Shuffle(rawValue: Prefs.string("wallpaperShuffle") ?? "") ?? .every5Minutes {
         didSet { Prefs.set(shuffle.rawValue, "wallpaperShuffle"); restartTimer() }
     }
-    /// 0 = image as is, 1 = black. Keeps text readable over busy art.
-    var dim = Prefs.double("wallpaperDim", 0.35) { didSet { Prefs.set(dim, "wallpaperDim") } }
-    var blur = Prefs.double("wallpaperBlur", 0) { didSet { Prefs.set(blur, "wallpaperBlur") } }
+    /// One "how much of the picture shows" setting instead of separate blur and dim:
+    /// 0 is a soft colour wash, 1 the image almost as is. Text stays readable across
+    /// the range because the dim rises as the blur falls.
+    var visibility = Prefs.double("wallpaperVisibility", 0.65) { didSet { Prefs.set(visibility, "wallpaperVisibility") } }
+
+    /// Cover art is often low resolution, so it always shows as a wash.
+    var blur: Double { source == .coverArt ? 70 : 80 * (1 - visibility) + 4 }
+    var dim: Double { source == .coverArt ? 0.4 : 0.42 - 0.22 * visibility }
 
     private(set) var boards: [Board] = []
     /// The decoded image on screen now (nil = no wallpaper).
@@ -143,7 +149,7 @@ import SwiftUI
         loadToken += 1
         let token = loadToken
         guard let url else {
-            withAnimation(.easeInOut(duration: 0.8)) { image = nil; imageID = "" }
+            withAnimation(.easeInOut(duration: 1.2)) { image = nil; imageID = "" }
             return
         }
         Task.detached(priority: .utility) { [weak self] in
@@ -158,7 +164,7 @@ import SwiftUI
             }
             await MainActor.run {
                 guard let self, token == self.loadToken, let decoded else { return }
-                withAnimation(.easeInOut(duration: 0.8)) {
+                withAnimation(.easeInOut(duration: 1.2)) {
                     self.image = NSImage(cgImage: decoded, size: NSSize(width: decoded.width, height: decoded.height))
                     self.imageID = url.path
                 }
@@ -177,9 +183,10 @@ import SwiftUI
 }
 
 /// The wallpaper layer: the image filling the area, blurred and dimmed per settings,
-/// crossfading when it changes.
+/// crossfading when it changes. `sharp` shows it with no blur (Now Playing).
 struct WallpaperBackground: View {
     @Environment(WallpaperStore.self) private var wallpaper
+    var sharp = false
 
     var body: some View {
         ZStack {
@@ -187,8 +194,9 @@ struct WallpaperBackground: View {
                 Image(nsImage: image)
                     .resizable()
                     .aspectRatio(contentMode: .fill)
-                    .blur(radius: wallpaper.blur, opaque: true)
-                    .overlay(Color.black.opacity(wallpaper.dim))
+                    .blur(radius: sharp && wallpaper.source != .coverArt ? 0 : wallpaper.blur, opaque: true)
+                    .saturation(wallpaper.blur > 40 ? 1.3 : 1)
+                    .overlay(Color.black.opacity(sharp ? 0.15 : wallpaper.dim))
                     .id(wallpaper.imageID)
                     .transition(.opacity)
             }
@@ -235,9 +243,16 @@ struct SettingsView: View {
                         }
                     }
                 }
-                if wallpaper.source != .off {
-                    LabeledContent("Dim") { Slider(value: $wallpaper.dim, in: 0...0.8) }
-                    LabeledContent("Blur") { Slider(value: $wallpaper.blur, in: 0...40) }
+                if wallpaper.source != .off && wallpaper.source != .coverArt {
+                    LabeledContent("Picture") {
+                        Slider(value: $wallpaper.visibility, in: 0...1) {
+                            EmptyView()
+                        } minimumValueLabel: {
+                            Text("Soft").font(.caption)
+                        } maximumValueLabel: {
+                            Text("Clear").font(.caption)
+                        }
+                    }
                 }
             }
         }

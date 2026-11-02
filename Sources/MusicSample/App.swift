@@ -64,6 +64,7 @@ struct RootView: View {
     @Environment(Player.self) private var player
     @Environment(LyricsStore.self) private var lyrics
     @Environment(WallpaperStore.self) private var wallpaper
+    @Environment(\.colorScheme) private var colorScheme
     @Environment(Router.self) private var router
     @State private var swipe = SwipeTracker()
 
@@ -76,6 +77,7 @@ struct RootView: View {
                 ZStack {
                     WallpaperBackground()
                     DetailView()
+                        .environment(\.colorScheme, wallpaper.isActive ? .dark : colorScheme)
                     if router.showNowPlaying {
                         NowPlayingView()
                             .transition(.move(edge: .bottom).combined(with: .opacity))

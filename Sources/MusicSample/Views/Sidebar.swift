@@ -40,6 +40,12 @@ struct SidebarView: View {
                         Label("Refresh", systemImage: "arrow.clockwise")
                     }
                     Spacer()
+                    Button { router.go(.settings) } label: {
+                        Image(systemName: "gearshape")
+                            .foregroundStyle(router.current == .settings ? Color.primary : Color.secondary)
+                    }
+                    .help("Settings (⌘,)")
+                    .accessibilityLabel("Settings")
                     Menu {
                         Button("Sign Out") { Task { await library.signOut() } }
                     } label: {

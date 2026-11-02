@@ -6,7 +6,6 @@ struct CommandPalette: View {
     @Environment(Library.self) private var library
     @Environment(Player.self) private var player
     @Environment(Router.self) private var router
-    @Environment(\.openSettings) private var openSettings
 
     private struct Command: Identifiable {
         let id: String
@@ -46,7 +45,7 @@ struct CommandPalette: View {
             Command(id: "lyrics", label: "Lyrics", group: "Actions", symbol: "quote.bubble") { router.togglePanel(.lyrics) },
             Command(id: "queue", label: "Up Next", group: "Actions", symbol: "list.bullet") { router.togglePanel(.queue) },
             Command(id: "refresh", label: "Refresh Library", group: "Actions", symbol: "arrow.clockwise") { Task { await library.refresh() } },
-            Command(id: "settings", label: "Settings", group: "Actions", symbol: "gearshape") { openSettings() },
+            Command(id: "settings", label: "Settings", group: "Actions", symbol: "gearshape") { router.go(.settings) },
             Command(id: "shortcuts", label: "Keyboard Shortcuts", group: "Actions", symbol: "keyboard") { router.showShortcuts = true },
         ]
         if let s = player.current {

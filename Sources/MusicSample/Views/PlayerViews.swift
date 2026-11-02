@@ -257,7 +257,7 @@ struct SoundPopover: View {
             Picker("Sleep timer", selection: $player.sleepTimer) {
                 ForEach(SleepTimer.allCases) { Text($0.rawValue).tag($0) }
             }
-            Text("Loudness matching and smooth transitions work. Crossfade, gapless, EQ and sleep timer aren't wired up yet.")
+            Text("Gapless, EQ and sleep timer aren't wired up yet.")
                 .font(.caption).foregroundStyle(.secondary)
         }
         .formStyle(.grouped)

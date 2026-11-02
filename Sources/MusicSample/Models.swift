@@ -80,7 +80,7 @@ struct LyricLine: Hashable, Codable {
 }
 
 enum Route: Hashable {
-    case home, search, liked, savedAlbums
+    case home, search, liked, savedAlbums, settings
     case page(String)
 }
 

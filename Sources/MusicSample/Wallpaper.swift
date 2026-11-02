@@ -253,12 +253,11 @@ struct WallpaperBackground: View {
     }
 }
 
-struct SettingsView: View {
+struct WallpaperSettings: View {
     @Environment(WallpaperStore.self) private var wallpaper
 
     var body: some View {
         @Bindable var wallpaper = wallpaper
-        Form {
             Section("Wallpaper") {
                 Picker("Show", selection: $wallpaper.source) {
                     ForEach(WallpaperStore.Source.allCases) { Text($0.label).tag($0) }
@@ -301,10 +300,7 @@ struct SettingsView: View {
                     }
                 }
             }
-        }
-        .formStyle(.grouped)
-        .frame(width: 460)
-        .onAppear { wallpaper.loadBoards() }
+            .onAppear { wallpaper.loadBoards() }
     }
 
     private func chooseImage() {

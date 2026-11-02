@@ -37,10 +37,11 @@ struct MusicSampleApp: App {
         // No top bar, like anicat: content runs to the top edge and the window
         // buttons sit over the sidebar.
         .windowStyle(.hiddenTitleBar)
-        Settings {
-            SettingsView().environment(wallpaper)
-        }
         .commands {
+            // Settings is a page in the window, not a separate settings window.
+            CommandGroup(replacing: .appSettings) {
+                Button("Settings…") { router.go(.settings) }.keyboardShortcut(",", modifiers: .command)
+            }
             CommandMenu("Playback") {
                 // Space and the other single keys are handled by KeyboardShortcuts (press ?).
                 Button(player.isPlaying ? "Pause  (Space)" : "Play  (Space)") { player.toggle() }
@@ -250,6 +251,7 @@ struct DetailView: View {
                 case .search: SearchView()
                 case .savedAlbums: SavedAlbumsView()
                 case .liked: PageView(id: Library.likedID)
+                case .settings: SettingsPage()
                 case .page(let id): PageView(id: id)
                 }
             }
@@ -268,6 +270,7 @@ struct DetailView: View {
         case .search: "Search"
         case .liked: "Liked Songs"
         case .savedAlbums: "Saved Albums"
+        case .settings: "Settings"
         case .page(let id): library.pages[id]?.title ?? ""
         }
     }

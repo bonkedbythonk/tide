@@ -1,51 +1,46 @@
 import AppKit
 import SwiftUI
 
-/// Moving colour blobs standing in for a real music video (mpv would render here).
-struct FakeVideo: View {
-    let song: Song
-    let playing: Bool
+/// Shows mpv's video layer. There is one layer for the whole app, so the
+/// surface that is `active` takes it (Now Playing, or fullscreen on top).
+struct VideoSurface: NSViewRepresentable {
+    @Environment(Player.self) private var player
+    var active = true
 
-    var body: some View {
-        TimelineView(.animation(minimumInterval: nil, paused: !playing)) { context in
-            let t = context.date.timeIntervalSinceReferenceDate
-            Canvas { c, size in
-                c.fill(Path(CGRect(origin: .zero, size: size)),
-                       with: .color(Color(hue: song.hue, saturation: 0.7, brightness: 0.25)))
-                c.addFilter(.blur(radius: min(size.width, size.height) * 0.08))
-                for i in 0..<6 {
-                    let d = Double(i)
-                    let x = size.width * (0.5 + 0.38 * sin(t * (0.21 + d * 0.05) + d * 1.7))
-                    let y = size.height * (0.5 + 0.36 * cos(t * (0.17 + d * 0.04) + d * 2.3))
-                    let r = min(size.width, size.height) * (0.22 + 0.06 * sin(t * 0.5 + d))
-                    let hue = (song.hue + d * 0.07).truncatingRemainder(dividingBy: 1)
-                    c.fill(Path(ellipseIn: CGRect(x: x - r, y: y - r, width: r * 2, height: r * 2)),
-                           with: .color(Color(hue: hue, saturation: 0.75, brightness: 0.95).opacity(0.75)))
-                }
-            }
-        }
-        .overlay(alignment: .topTrailing) {
-            Text("SAMPLE VIDEO")
-                .font(.caption2.weight(.bold))
-                .foregroundStyle(.white.opacity(0.6))
-                .padding(8)
-        }
+    func makeNSView(context: Context) -> NSView {
+        let host = NSView()
+        host.wantsLayer = true
+        host.layer?.backgroundColor = NSColor.black.cgColor
+        return host
+    }
+
+    func updateNSView(_ host: NSView, context: Context) {
+        let video = player.engine.videoView
+        guard active, video.superview !== host else { return }
+        video.removeFromSuperview()
+        video.frame = host.bounds
+        video.autoresizingMask = [.width, .height]
+        host.addSubview(video)
     }
 }
 
-/// 16:9 video with the ambient glow behind it (Pear's ambient-mode).
+/// 16:9 video with a glow from the cover art behind it (Pear's ambient-mode).
 struct AmbientVideo: View {
     @Environment(Player.self) private var player
+    @Environment(Router.self) private var router
     let song: Song
 
     var body: some View {
         ZStack {
-            FakeVideo(song: song, playing: player.isPlaying)
-                .scaleEffect(1.15)
-                .blur(radius: 50)
-                .opacity(0.65)
-            FakeVideo(song: song, playing: player.isPlaying)
+            if let url = song.artwork {
+                CachedImage(url: url, maxPixelSize: 200)
+                    .scaleEffect(1.15)
+                    .blur(radius: 50)
+                    .opacity(0.7)
+            }
+            VideoSurface(active: !router.videoFullscreen)
                 .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            if player.isLoading { ProgressView().controlSize(.large) }
         }
         .aspectRatio(16 / 9, contentMode: .fit)
     }
@@ -57,36 +52,24 @@ struct VideoFullscreenView: View {
     @State private var controlsVisible = true
     @State private var hideTask: Task<Void, Never>?
     @State private var showLyrics = false
-    @State private var quality = "Auto (1080p)"
-    @State private var note: String?
     @FocusState private var focused: Bool
 
-    private let qualities = ["Auto (1080p)", "1080p", "720p", "480p", "360p"]
+    private let qualities = [2160, 1440, 1080, 720, 480, 360]
 
     var body: some View {
         ZStack {
             Color.black
             if let s = player.current {
-                FakeVideo(song: s, playing: player.isPlaying)
-                    .scaleEffect(1.2)
-                    .blur(radius: 90)
-                    .opacity(0.45)
-                FakeVideo(song: s, playing: player.isPlaying)
-                    .aspectRatio(16 / 9, contentMode: .fit)
+                VideoSurface()
+                // The video layer is AppKit; clicks are caught by this layer above it.
+                Color.clear
+                    .contentShape(Rectangle())
                     .onTapGesture(count: 2) { router.exitVideoFullscreen() }
                     .onTapGesture { player.toggle(); poke() }
+                if player.isLoading { ProgressView().controlSize(.large) }
 
                 if showLyrics { lyricLine(s) }
                 controls(s).opacity(controlsVisible ? 1 : 0)
-            }
-            if let note {
-                Text(note)
-                    .font(.callout.weight(.medium))
-                    .padding(.horizontal, 14).padding(.vertical, 8)
-                    .background(.ultraThinMaterial, in: Capsule())
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                    .padding(28)
-                    .transition(.opacity)
             }
         }
         .ignoresSafeArea()
@@ -102,9 +85,7 @@ struct VideoFullscreenView: View {
         .onAppear {
             focused = true
             poke()
-            skipNonMusicIntro()
         }
-        .onChange(of: player.current?.id) { skipNonMusicIntro() }
         .onDisappear { hideTask?.cancel() }
     }
 
@@ -125,8 +106,8 @@ struct VideoFullscreenView: View {
                     }
                     .help("Lyrics overlay (C)")
                     Menu {
-                        Picker("Quality", selection: $quality) {
-                            ForEach(qualities, id: \.self) { Text($0).tag($0) }
+                        Picker("Max quality", selection: Binding(get: { player.videoQuality }, set: { player.videoQuality = $0 })) {
+                            ForEach(qualities, id: \.self) { Text("\($0)p").tag($0) }
                         }
                     } label: {
                         Image(systemName: "gearshape")
@@ -134,7 +115,7 @@ struct VideoFullscreenView: View {
                     .menuStyle(.borderlessButton)
                     .menuIndicator(.hidden)
                     .fixedSize()
-                    .help("Quality: \(quality)")
+                    .help("Max quality: \(player.videoQuality)p")
                     Button {
                         player.videoMode = false
                         router.exitVideoFullscreen()
@@ -152,10 +133,10 @@ struct VideoFullscreenView: View {
             }
             HStack(spacing: 10) {
                 Text(formatTime(player.position)).frame(width: 44, alignment: .trailing)
-                Slider(value: Binding(get: { min(player.position, s.playDuration) }, set: { player.seek($0); poke() }),
-                       in: 0...s.playDuration)
+                Slider(value: Binding(get: { min(player.position, max(player.length, 1)) }, set: { player.seek($0); poke() }),
+                       in: 0...max(player.length, 1))
                     .controlSize(.small)
-                Text(formatTime(s.playDuration)).frame(width: 44, alignment: .leading)
+                Text(formatTime(max(player.length, 1))).frame(width: 44, alignment: .leading)
             }
             .font(.callout)
             .monospacedDigit()
@@ -203,7 +184,7 @@ struct VideoFullscreenView: View {
 
     private func seek(_ delta: TimeInterval) {
         guard let s = player.current else { return }
-        player.seek(min(max(0, player.position + delta), s.playDuration))
+        player.seek(min(max(0, player.position + delta), max(player.length, 1)))
         poke()
     }
 
@@ -217,13 +198,5 @@ struct VideoFullscreenView: View {
             withAnimation(.easeOut(duration: 0.5)) { controlsVisible = false }
             NSCursor.setHiddenUntilMouseMoves(true)
         }
-    }
-
-    /// Stand-in for SponsorBlock's "non-music" segment skip at the start of a video.
-    private func skipNonMusicIntro() {
-        guard player.position < 6 else { return }
-        player.seek(6)
-        withAnimation { note = "Skipped non-music intro (SponsorBlock)" }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { withAnimation { note = nil } }
     }
 }

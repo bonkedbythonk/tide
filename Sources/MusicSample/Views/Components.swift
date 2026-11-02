@@ -55,6 +55,7 @@ struct LikeButton: View {
         Button { library.toggleLike(songID) } label: {
             Image(systemName: liked ? "heart.fill" : "heart")
                 .foregroundStyle(liked ? Color.pink : Color.secondary)
+                .symbolEffect(.bounce, value: liked)
         }
         .buttonStyle(.borderless)
         .help(liked ? "Remove from Liked Songs" : "Like")
@@ -220,10 +221,11 @@ struct SongTile: View {
         HStack(spacing: 10) {
             ZStack {
                 Artwork(hue: song.hue, url: song.artwork, side: 44, radius: 5)
-                if hovering || isCurrent {
+                if isCurrent {
+                    PlayingIndicator()
+                } else if hovering {
                     RoundedRectangle(cornerRadius: 5).fill(.black.opacity(0.35))
-                    Image(systemName: isCurrent && player.isPlaying ? "speaker.wave.2.fill" : "play.fill")
-                        .foregroundStyle(.white)
+                    Image(systemName: "play.fill").foregroundStyle(.white)
                 }
             }
             .frame(width: 44, height: 44)
@@ -247,6 +249,12 @@ struct SongTile: View {
         .background(RoundedRectangle(cornerRadius: 8).fill(hovering ? Color.primary.opacity(0.06) : .clear))
         .contentShape(Rectangle())
         .stableHover { hovering = $0 }
+        .task(id: hovering) {
+            // Resting on a row for a moment starts resolving it (your snappy plugin's idea).
+            guard hovering else { return }
+            try? await Task.sleep(for: .milliseconds(250))
+            if !Task.isCancelled { player.prefetch(song) }
+        }
         .onTapGesture { player.play(song, in: context) }
         .draggable(SongDrag.payload([song.id])) { DragPreview(songs: [song]) }
         .contextMenu { SongMenu(songs: [song]) }
@@ -275,6 +283,7 @@ struct MediaCard: View {
     var symbol = "music.note"
     let open: () -> Void
     let play: (() -> Void)?
+    var prefetch: (() -> Void)?
     @State private var hovering = false
 
     var body: some View {
@@ -282,6 +291,8 @@ struct MediaCard: View {
             ZStack(alignment: .bottomTrailing) {
                 Artwork(hue: hue, url: artwork, width: width, height: wide ? width * 9 / 16 : width,
                         radius: round ? width / 2 : 8, symbol: symbol)
+                    .scaleEffect(hovering ? 1.03 : 1)
+                    .animation(.spring(duration: 0.25, bounce: 0.3), value: hovering)
                 if hovering, let play {
                     Button(action: play) {
                         Image(systemName: "play.fill")
@@ -301,6 +312,11 @@ struct MediaCard: View {
         .frame(width: width, alignment: .leading)
         .contentShape(Rectangle())
         .stableHover { hovering = $0 }
+        .task(id: hovering) {
+            guard hovering, let prefetch else { return }
+            try? await Task.sleep(for: .milliseconds(250))
+            if !Task.isCancelled { prefetch() }
+        }
         .onTapGesture(perform: open)
     }
 }

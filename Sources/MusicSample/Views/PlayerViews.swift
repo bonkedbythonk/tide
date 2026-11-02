@@ -1,6 +1,9 @@
 import SwiftUI
 
 struct PlayerBar: View {
+    @Environment(Player.self) private var player
+    @Environment(Router.self) private var router
+
     var body: some View {
         HStack(spacing: 16) {
             NowPlayingInfo().frame(width: 280, alignment: .leading)
@@ -12,10 +15,16 @@ struct PlayerBar: View {
         .padding(.horizontal, 16)
         .frame(height: 76)
         .background(.bar)
+        // Clicking anywhere on the bar that isn't a control opens or closes Now Playing.
+        .contentShape(Rectangle())
+        .onTapGesture {
+            guard player.current != nil else { return }
+            withAnimation(.spring(duration: 0.45, bounce: 0.12)) { router.showNowPlaying.toggle() }
+        }
     }
 }
 
-/// Current song. Two-finger swipe over it skips; click the art for Now Playing.
+/// Current song. Two-finger swipe over it skips.
 struct NowPlayingInfo: View {
     @Environment(Player.self) private var player
     @Environment(Router.self) private var router
@@ -25,11 +34,24 @@ struct NowPlayingInfo: View {
             if let s = player.current {
                 HStack(spacing: 12) {
                     Artwork(hue: s.hue, url: s.artwork, side: 52, radius: 6)
-                        .onTapGesture { withAnimation(.snappy) { router.showNowPlaying.toggle() } }
-                        .help("Show Now Playing")
+                        .overlay(alignment: .topTrailing) {
+                            Image(systemName: router.showNowPlaying ? "chevron.down" : "chevron.up")
+                                .font(.system(size: 9, weight: .bold))
+                                .foregroundStyle(.white)
+                                .padding(3)
+                                .background(.black.opacity(0.45), in: Circle())
+                                .padding(3)
+                                .contentTransition(.symbolEffect(.replace))
+                        }
                     VStack(alignment: .leading, spacing: 2) {
                         Text(s.title).font(.headline).lineLimit(1)
-                        Text(s.artist).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+                        if let error = player.lastError {
+                            Text(error).font(.caption).foregroundStyle(.red).lineLimit(1).help(error)
+                        } else if player.isLoading {
+                            Text("Loading…").font(.subheadline).foregroundStyle(.secondary)
+                        } else {
+                            Text(s.artist).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+                        }
                     }
                 }
                 .id(s.id)
@@ -54,7 +76,7 @@ struct TransportControls: View {
     @Environment(Player.self) private var player
 
     var body: some View {
-        let duration = player.current?.playDuration ?? 1
+        let duration = max(player.length, 1)
         VStack(spacing: 4) {
             HStack(spacing: 24) {
                 Button { player.shuffle.toggle() } label: {
@@ -127,8 +149,14 @@ struct PlayerExtras: View {
     }
 
     private func panelButton(_ symbol: String, tab: PanelTab, help: String) -> some View {
-        let active = router.panelVisible && router.panelTab == tab
-        return Button { router.togglePanel(tab) } label: {
+        let active = router.panelTab == tab && (router.showNowPlaying || router.panelVisible)
+        return Button {
+            if router.showNowPlaying {
+                withAnimation(.snappy) { router.panelTab = tab }
+            } else {
+                router.togglePanel(tab)
+            }
+        } label: {
             Image(systemName: symbol).foregroundStyle(active ? Color.accentColor : Color.secondary)
         }
         .help(help)
@@ -210,7 +238,7 @@ struct SoundPopover: View {
             Picker("Sleep timer", selection: $player.sleepTimer) {
                 ForEach(SleepTimer.allCases) { Text($0.rawValue).tag($0) }
             }
-            Text("Controls only. The sample plays no audio.")
+            Text("Normalize works. Crossfade, gapless, EQ and sleep timer aren't wired up yet.")
                 .font(.caption).foregroundStyle(.secondary)
         }
         .formStyle(.grouped)
@@ -281,6 +309,7 @@ struct QueueRow: View {
     var body: some View {
         HStack(spacing: 10) {
             Artwork(hue: song.hue, url: song.artwork, side: 36, radius: 4, symbol: nil)
+                .overlay { if current { PlayingIndicator() } }
             VStack(alignment: .leading, spacing: 1) {
                 Text(song.title).lineLimit(1).foregroundStyle(current ? Color.accentColor : Color.primary)
                 Text(song.artist).font(.caption).foregroundStyle(.secondary).lineLimit(1)
@@ -336,9 +365,10 @@ struct LyricsView: View {
 struct NowPlayingView: View {
     @Environment(Player.self) private var player
     @Environment(Router.self) private var router
-    @State private var tab = PanelTab.lyrics
+    @State private var appeared = false
 
     var body: some View {
+        @Bindable var router = router
         ZStack(alignment: .topLeading) {
             if let s = player.current {
                 LinearGradient(
@@ -347,44 +377,46 @@ struct NowPlayingView: View {
                 )
                 .overlay(.ultraThinMaterial)
                 .ignoresSafeArea()
-                .animation(.easeInOut(duration: 0.5), value: s.id)
+                .animation(.easeInOut(duration: 0.6), value: s.id)
 
                 HStack(alignment: .center, spacing: 48) {
                     VStack(spacing: 18) {
-                        if player.videoMode {
-                            AmbientVideo(song: s)
-                                .frame(width: 520)
-                                .onTapGesture(count: 2) { router.enterVideoFullscreen() }
-                                .overlay(alignment: .bottomTrailing) {
-                                    Button { router.enterVideoFullscreen() } label: {
-                                        Image(systemName: "arrow.up.left.and.arrow.down.right")
-                                            .padding(8)
-                                            .background(.ultraThinMaterial, in: Circle())
+                        Group {
+                            if player.videoMode {
+                                AmbientVideo(song: s)
+                                    .frame(width: 520)
+                                    .onTapGesture(count: 2) { router.enterVideoFullscreen() }
+                                    .overlay(alignment: .bottomTrailing) {
+                                        Button { router.enterVideoFullscreen() } label: {
+                                            Image(systemName: "arrow.up.left.and.arrow.down.right")
+                                                .padding(8)
+                                                .background(.ultraThinMaterial, in: Circle())
+                                        }
+                                        .buttonStyle(.plain)
+                                        .padding(10)
+                                        .help("Fullscreen (or double-click the video)")
                                     }
-                                    .buttonStyle(.plain)
-                                    .padding(10)
-                                    .help("Fullscreen (or double-click the video)")
-                                }
-                                .id(s.id)
-                                .transition(.push(from: player.skipForward ? .trailing : .leading))
-                        } else {
-                            Artwork(hue: s.hue, url: s.artwork, side: 340, radius: 14)
-                                .shadow(color: .black.opacity(0.35), radius: 24, y: 10)
-                                .id(s.id)
-                                .transition(.push(from: player.skipForward ? .trailing : .leading))
-                                .onHover { router.pointerOverPlayerSong = $0 }
+                            } else {
+                                Artwork(hue: s.hue, url: s.artwork, side: 340, radius: 14)
+                                    .shadow(color: .black.opacity(0.35), radius: 24, y: 10)
+                                    .scaleEffect(player.isPlaying ? 1 : 0.94)
+                                    .animation(.spring(duration: 0.5, bounce: 0.25), value: player.isPlaying)
+                                    .onHover { router.pointerOverPlayerSong = $0 }
+                            }
                         }
-                        Picker("", selection: Binding(get: { player.videoMode }, set: { player.videoMode = $0 })) {
-                            Text("Song").tag(false)
-                            Text("Video").tag(true)
-                        }
-                        .pickerStyle(.segmented)
-                        .labelsHidden()
-                        .frame(width: 160)
+                        .id("\(s.id)-\(player.videoMode)")
+                        .transition(.push(from: player.skipForward ? .trailing : .leading))
+                        .scaleEffect(appeared ? 1 : 0.85)
+                        .opacity(appeared ? 1 : 0)
+
+                        PillSwitch(options: [("Song", false), ("Video", true)],
+                                   selection: Binding(get: { player.videoMode }, set: { player.videoMode = $0 }))
                         VStack(spacing: 4) {
                             Text(s.title).font(.title.bold()).lineLimit(1)
                             Text(s.album.isEmpty ? s.artist : "\(s.artist) — \(s.album)").font(.title3).foregroundStyle(.secondary).lineLimit(1)
                         }
+                        .id(s.id)
+                        .transition(.opacity)
                         HStack(spacing: 18) {
                             LikeButton(songID: s.id)
                             StandaloneAddButton(songIDs: [s.id])
@@ -392,23 +424,24 @@ struct NowPlayingView: View {
                         .font(.title2)
                     }
                     .frame(width: player.videoMode ? 520 : 380)
-                    .animation(.snappy(duration: 0.3), value: s.id)
-                    .animation(.snappy(duration: 0.3), value: player.videoMode)
+                    .animation(.snappy(duration: 0.35), value: s.id)
+                    .animation(.snappy(duration: 0.35), value: player.videoMode)
 
                     VStack(spacing: 8) {
-                        Picker("", selection: $tab) {
-                            Text("Lyrics").tag(PanelTab.lyrics)
-                            Text("Up Next").tag(PanelTab.queue)
+                        PillSwitch(options: [("Lyrics", PanelTab.lyrics), ("Up Next", PanelTab.queue)],
+                                   selection: $router.panelTab)
+                        Group {
+                            switch router.panelTab {
+                            case .lyrics: LyricsView(fontSize: 28)
+                            case .queue: NowPlayingQueue()
+                            }
                         }
-                        .pickerStyle(.segmented)
-                        .labelsHidden()
-                        .frame(width: 220)
-                        switch tab {
-                        case .lyrics: LyricsView(fontSize: 28)
-                        case .queue: QueueView()
-                        }
+                        .transition(.opacity.combined(with: .offset(y: 8)))
                     }
                     .frame(maxWidth: .infinity)
+                    .animation(.snappy(duration: 0.25), value: router.panelTab)
+                    .offset(y: appeared ? 0 : 30)
+                    .opacity(appeared ? 1 : 0)
                 }
                 .padding(40)
                 .environment(\.colorScheme, .dark)
@@ -418,13 +451,96 @@ struct NowPlayingView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
 
-            Button { withAnimation(.snappy) { router.showNowPlaying = false } } label: {
+            Button { withAnimation(.spring(duration: 0.45, bounce: 0.12)) { router.showNowPlaying = false } } label: {
                 Image(systemName: "chevron.down").font(.title3.weight(.semibold)).padding(8)
             }
             .buttonStyle(.plain)
             .keyboardShortcut(router.videoFullscreen ? nil : .cancelAction)
             .help("Close (Esc)")
             .padding(12)
+        }
+        .onAppear {
+            withAnimation(.spring(duration: 0.55, bounce: 0.2).delay(0.05)) { appeared = true }
+        }
+    }
+}
+
+/// Up Next inside Now Playing: transparent rows on the album colour, no list chrome.
+struct NowPlayingQueue: View {
+    @Environment(Player.self) private var player
+
+    var body: some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 2) {
+                if let s = player.current {
+                    Text("Now Playing").font(.headline).foregroundStyle(.secondary).padding(.horizontal, 8)
+                    QueueRow(song: s, current: true).padding(8)
+                }
+                Text("Up Next").font(.headline).foregroundStyle(.secondary).padding(.horizontal, 8).padding(.top, 12)
+                if player.upNext.isEmpty {
+                    Text("Nothing queued").foregroundStyle(.secondary).padding(8)
+                }
+                ForEach(Array(player.upNext.enumerated()), id: \.offset) { i, s in
+                    QueueRow(song: s, current: false)
+                        .padding(8)
+                        .contentShape(Rectangle())
+                        .modifier(HoverHighlight())
+                        .onTapGesture { player.jump(to: player.index + 1 + i) }
+                        .contextMenu { SongMenu(songs: [s]) }
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 16)
+        }
+        .scrollIndicators(.hidden)
+    }
+}
+
+/// Segmented switch with a highlight that slides between options.
+struct PillSwitch<Value: Hashable>: View {
+    let options: [(String, Value)]
+    @Binding var selection: Value
+    @Namespace private var pill
+
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(options, id: \.0) { label, value in
+                Button {
+                    guard selection != value else { return }
+                    withAnimation(.spring(duration: 0.3, bounce: 0.2)) { selection = value }
+                } label: {
+                    Text(label)
+                        .font(.callout.weight(.medium))
+                        .foregroundStyle(selection == value ? Color.primary : Color.secondary)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 5)
+                        .background {
+                            if selection == value {
+                                Capsule().fill(.white.opacity(0.18))
+                                    .matchedGeometryEffect(id: "pill", in: pill)
+                            }
+                        }
+                        .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(3)
+        .background(Capsule().fill(.black.opacity(0.2)))
+    }
+}
+
+/// Animated bars for the song that's playing; still while paused.
+struct PlayingIndicator: View {
+    @Environment(Player.self) private var player
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 4).fill(.black.opacity(0.4))
+            Image(systemName: "waveform")
+                .font(.system(size: 14, weight: .bold))
+                .foregroundStyle(.white)
+                .symbolEffect(.variableColor.iterative.dimInactiveLayers, isActive: player.isPlaying)
         }
     }
 }

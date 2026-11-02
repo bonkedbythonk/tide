@@ -70,7 +70,8 @@ struct ShelfContent: View {
                                       player.play(s, in: videos, video: video)
                                       if video { withAnimation(.snappy) { router.showNowPlaying = true } }
                                   },
-                                  play: { player.play(s, in: videos, video: video) })
+                                  play: { player.play(s, in: videos, video: video) },
+                                  prefetch: { player.prefetch(s, video: video) })
                     case .media(let m):
                         MediaItemCard(item: m)
                     }

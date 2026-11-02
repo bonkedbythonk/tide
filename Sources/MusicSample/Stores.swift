@@ -14,57 +14,133 @@ enum SleepTimer: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
-/// Fake playback: a timer moves the position so the UI behaves like a real player.
+/// Playback through mpv, with stream URLs from yt-dlp.
 @Observable final class Player {
     var queue: [Song] = []
     var index = 0
     var isPlaying = false
+    var isLoading = false
     var position: TimeInterval = 0
-    var volume = 0.7
+    var duration: TimeInterval = 0
+    var lastError: String?
+    var volume = 0.7 { didSet { applyVolume() } }
     var shuffle = false
     var repeatMode = RepeatMode.off
     var crossfade = 0.0
     var gapless = true
     var eq = EQPreset.flat
-    var normalize = true
+    var normalize = false { didSet { applyFilters() } }
     var sleepTimer = SleepTimer.off
     var device = "This Mac"
     var skipForward = true
-    /// Song or music video for the current track (Pear's video-toggle).
-    var videoMode = false
+    /// Song or music video for the current track (Pear's video-toggle). Switching
+    /// reloads the track as the other kind, from the same moment.
+    var videoMode = false {
+        didSet {
+            guard oldValue != videoMode, !settingVideoForNewQueue, current != nil else { return }
+            load(at: position, autoplay: isPlaying)
+        }
+    }
 
-    @ObservationIgnored private var timer: Timer?
+    /// Highest video resolution to ask for (Pear's quality-changer).
+    var videoQuality = 1080 {
+        didSet {
+            guard oldValue != videoQuality, videoMode, current != nil else { return }
+            load(at: position, autoplay: isPlaying)
+        }
+    }
+
+    @ObservationIgnored let engine = MpvEngine()
+    @ObservationIgnored private let resolver = StreamResolver()
+    @ObservationIgnored private var nowPlaying: NowPlayingCenter?
+    @ObservationIgnored private var loadToken = 0
+    @ObservationIgnored private var settingVideoForNewQueue = false
 
     var current: Song? { queue.indices.contains(index) ? queue[index] : nil }
     var upNext: [Song] { queue.indices.contains(index) ? Array(queue[(index + 1)...]) : [] }
+    /// mpv's duration once known; Home items arrive without one.
+    var length: TimeInterval { duration > 0 ? duration : (current?.duration ?? 0) }
 
     init() {
-        let t = Timer(timeInterval: 0.25, repeats: true) { [weak self] _ in self?.tick() }
-        RunLoop.main.add(t, forMode: .common)
-        timer = t
+        engine.onTime = { [weak self] t in
+            guard let self, !self.isLoading else { return }
+            self.position = t
+        }
+        engine.onDuration = { [weak self] d in
+            self?.duration = d
+            self?.publishNowPlaying()
+        }
+        engine.onPause = { [weak self] paused in
+            guard let self, !self.isLoading, self.current != nil else { return }
+            self.isPlaying = !paused
+            self.publishNowPlaying()
+        }
+        engine.onEnded = { [weak self] in self?.trackEnded() }
+        engine.onError = { [weak self] message in
+            self?.lastError = "Playback failed: \(message)"
+            self?.isPlaying = false
+        }
+        applyVolume()
+        applyFilters()
+        nowPlaying = NowPlayingCenter(player: self)
     }
 
-    private func tick() {
-        guard isPlaying, let song = current else { return }
-        position += 0.25
-        if position >= song.playDuration {
-            if repeatMode == .one { position = 0 } else { next() }
+    /// Resolves the current track's streams (cached or prefetched when possible)
+    /// and hands them to mpv. A newer load cancels an older one still resolving.
+    private func load(at start: TimeInterval = 0, autoplay: Bool = true) {
+        guard let song = current else {
+            engine.stop()
+            return
+        }
+        loadToken += 1
+        let token = loadToken
+        isLoading = true
+        isPlaying = autoplay
+        position = start
+        duration = song.duration
+        lastError = nil
+        publishNowPlaying()
+        let video = videoMode
+        let height = videoQuality
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                let streams = try await self.resolver.resolve(song.id, video: video, maxHeight: height)
+                let wait = streams.availableAt.timeIntervalSinceNow
+                if wait > 0 { try await Task.sleep(for: .seconds(wait + 0.2)) }
+                guard token == self.loadToken else { return }
+                self.engine.load(audio: streams.audio, video: streams.video, start: start, paused: !autoplay)
+                self.isLoading = false
+                await self.resolver.prefetch(self.upNext.prefix(2).map(\.id), video: video, maxHeight: height)
+            } catch {
+                guard token == self.loadToken else { return }
+                self.isLoading = false
+                self.isPlaying = false
+                self.lastError = error.localizedDescription
+            }
         }
     }
 
-    func play(_ song: Song, in list: [Song], video: Bool = false) {
-        videoMode = video
+    /// Starts resolving a song the pointer rests on, so a click on it starts sooner.
+    func prefetch(_ song: Song, video: Bool = false) {
+        let height = videoQuality
+        Task { await resolver.prefetch([song.id], video: video, maxHeight: height) }
+    }
+
+    func play(_ song: Song, in list: [Song], video: Bool = false, at start: TimeInterval = 0) {
         var list = list.isEmpty ? [song] : list
-        var start = list.firstIndex(of: song) ?? 0
+        var first = list.firstIndex(of: song) ?? 0
         if shuffle {
-            list = [song] + list.enumerated().filter { $0.offset != start }.map(\.element).shuffled()
-            start = 0
+            list = [song] + list.enumerated().filter { $0.offset != first }.map(\.element).shuffled()
+            first = 0
         }
+        settingVideoForNewQueue = true
+        videoMode = video
+        settingVideoForNewQueue = false
         skipForward = true
         queue = list
-        index = start
-        position = 0
-        isPlaying = true
+        index = first
+        load(at: start)
     }
 
     func playAll(_ songs: [Song], shuffled: Bool = false, video: Bool = false) {
@@ -74,21 +150,22 @@ enum SleepTimer: String, CaseIterable, Identifiable {
     }
 
     func resume(_ song: Song, at time: TimeInterval) {
-        play(song, in: [song])
-        position = time
+        play(song, in: [song], at: time)
     }
 
     func jump(to queueIndex: Int) {
         guard queue.indices.contains(queueIndex) else { return }
         skipForward = queueIndex > index
         index = queueIndex
-        position = 0
-        isPlaying = true
+        load()
     }
 
     func toggle() {
         guard current != nil else { return }
+        if lastError != nil { return load(at: position) }
         isPlaying.toggle()
+        engine.set("pause", isPlaying ? "no" : "yes")
+        publishNowPlaying()
     }
 
     func next() {
@@ -99,23 +176,35 @@ enum SleepTimer: String, CaseIterable, Identifiable {
         } else if repeatMode == .all {
             index = 0
         } else {
+            engine.stop()
             isPlaying = false
+            position = 0
+            publishNowPlaying()
+            return
         }
-        position = 0
+        load()
     }
 
     func previous() {
         guard !queue.isEmpty else { return }
-        skipForward = false
         if position > 3 || index == 0 {
-            position = 0
+            seek(0)
         } else {
+            skipForward = false
             index -= 1
-            position = 0
+            load()
         }
     }
 
-    func seek(_ time: TimeInterval) { position = time }
+    private func trackEnded() {
+        if repeatMode == .one { load() } else { next() }
+    }
+
+    func seek(_ time: TimeInterval) {
+        position = time
+        engine.seek(time)
+        publishNowPlaying()
+    }
 
     func cycleRepeat() {
         repeatMode = switch repeatMode {
@@ -146,6 +235,13 @@ enum SleepTimer: String, CaseIterable, Identifiable {
         up.remove(atOffsets: offsets)
         queue = Array(queue[...index]) + up
     }
+
+    /// Squared, so the slider's lower half isn't all "loud" (Pear's exponential-volume).
+    private func applyVolume() { engine.set("volume", String(format: "%.1f", volume * volume * 100)) }
+
+    private func applyFilters() { engine.set("af", normalize ? "lavfi=[loudnorm=I=-14:TP=-1.5:LRA=11]" : "") }
+
+    private func publishNowPlaying() { nowPlaying?.update(song: current, position: position, duration: length, playing: isPlaying) }
 }
 
 /// Home section order and visibility, by section title, kept between launches.

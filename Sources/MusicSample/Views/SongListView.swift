@@ -63,7 +63,9 @@ struct SongListView: View {
             Table(of: SongRowItem.self, selection: $selection, sortOrder: $sortOrder) {
                 TableColumn("#", value: \.number) { item in
                     if currentID == item.id {
-                        Image(systemName: "speaker.wave.2.fill").foregroundStyle(Color.accentColor)
+                        Image(systemName: "waveform")
+                            .foregroundStyle(Color.accentColor)
+                            .symbolEffect(.variableColor.iterative.dimInactiveLayers, isActive: player.isPlaying)
                     } else {
                         Text("\(item.number)").foregroundStyle(.secondary).monospacedDigit()
                     }

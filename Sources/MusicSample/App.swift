@@ -72,6 +72,7 @@ struct RootView: View {
                             .zIndex(1)
                     }
                 }
+                .animation(.easeOut(duration: 0.18), value: router.current)
                 .inspector(isPresented: Binding(
                     get: { router.panelVisible && !router.showNowPlaying },
                     set: { router.panelVisible = $0 }
@@ -147,6 +148,7 @@ struct DetailView: View {
                 }
             }
         }
+        .transition(.opacity.combined(with: .offset(y: 6)))
         .id(router.current)
         .navigationTitle(title)
     }

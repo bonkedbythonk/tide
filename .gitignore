@@ -1,3 +1,5 @@
 .build/
 MusicSample.app/
 Tide.app/
+iOS/Tide.xcodeproj/
+iOS/Generated/

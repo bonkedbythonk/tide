@@ -1,0 +1,38 @@
+# The iPhone companion. SwiftPM can't make an iOS .app, so this is an Xcode
+# project, generated with `xcodegen generate` and not committed. It compiles
+# Sources/TideLink directly instead of depending on the root package, which
+# would pull in MPVKit.
+name: Tide
+options:
+  bundleIdPrefix: local.tide
+  deploymentTarget:
+    iOS: "18.0"
+  createIntermediateGroups: true
+
+targets:
+  TideiOS:
+    type: application
+    platform: iOS
+    sources:
+      - path: Sources
+      - path: ../Sources/TideLink
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: local.tide.ios
+        PRODUCT_NAME: Tide
+        SWIFT_VERSION: "5"
+        TARGETED_DEVICE_FAMILY: "1"
+        GENERATE_INFOPLIST_FILE: NO
+    info:
+      path: Generated/Info.plist
+      properties:
+        CFBundleDisplayName: Tide
+        CFBundleShortVersionString: "1.0"
+        CFBundleVersion: "1"
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        # Keeps playing with the screen locked.
+        UIBackgroundModes: [audio]
+        # Without these, iOS silently finds nothing on the local network.
+        NSLocalNetworkUsageDescription: Tide finds and controls the Tide app on your Mac over your local network.
+        NSBonjourServices: [_tide._tcp, _tide-audio._tcp]

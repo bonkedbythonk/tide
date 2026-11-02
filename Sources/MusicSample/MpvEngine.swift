@@ -123,6 +123,14 @@ final class MpvEngine {
     }
 
     func stop() { command(["stop"]) }
+
+    /// Puts a video picture on the track that's already playing; the audio carries on.
+    func addVideo(_ url: URL) {
+        set("vid", "auto")
+        command(["video-add", url.absoluteString, "select"])
+    }
+
+    func hideVideo() { set("vid", "no") }
     func seek(_ seconds: Double) { command(["seek", String(seconds), "absolute"]) }
 
     func set(_ property: String, _ value: String) {

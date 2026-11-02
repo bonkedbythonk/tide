@@ -58,17 +58,24 @@ enum SleepTimer: String, CaseIterable, Identifiable {
     /// reloads the track as the other kind, from the same moment.
     var videoMode = false {
         didSet {
-            guard oldValue != videoMode, !settingVideoForNewQueue, current != nil else { return }
-            load(at: position, autoplay: isPlaying, followLive: true)
+            guard oldValue != videoMode, !settingVideoForNewQueue, let song = current else { return }
+            // A song and its video share one timeline, so the audio keeps playing and
+            // only the picture is added or hidden. Reloading the track cut the sound out.
+            guard !isLoading, lastError == nil else {
+                return load(at: position, autoplay: isPlaying, followLive: true)
+            }
+            if videoMode { attachVideo(to: song) } else { engine.hideVideo() }
         }
     }
+    /// The picture is on its way for a song that's already playing.
+    var videoLoading = false
 
     /// Highest video resolution to ask for (Pear's quality-changer).
     var videoQuality = Prefs.int("videoQuality", 1080) {
         didSet {
             Prefs.set(videoQuality, "videoQuality")
-            guard oldValue != videoQuality, videoMode, current != nil else { return }
-            load(at: position, autoplay: isPlaying, followLive: true)
+            guard oldValue != videoQuality, videoMode, let song = current else { return }
+            if isLoading { load(at: position, autoplay: isPlaying, followLive: true) } else { attachVideo(to: song) }
         }
     }
 
@@ -198,6 +205,29 @@ enum SleepTimer: String, CaseIterable, Identifiable {
                 self.lastError = message.contains("not a bot")
                     ? "YouTube is asking to confirm you're not a bot. Try again in a while."
                     : message
+            }
+        }
+    }
+
+    private func attachVideo(to song: Song) {
+        let token = loadToken
+        let height = videoQuality
+        videoLoading = true
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { if token == self.loadToken { self.videoLoading = false } }
+            do {
+                let streams = try await self.resolver.resolve(song.id, video: true, maxHeight: height)
+                let wait = streams.availableAt.timeIntervalSinceNow + 0.2
+                if wait > 0 { try await Task.sleep(for: .seconds(wait)) }
+                guard token == self.loadToken, self.videoMode, self.current?.id == song.id,
+                      let video = streams.video else { return }
+                self.engine.addVideo(video)
+            } catch {
+                guard token == self.loadToken else { return }
+                self.lastError = error.localizedDescription.contains("not a bot")
+                    ? "YouTube is asking to confirm you're not a bot. Try again in a while."
+                    : error.localizedDescription
             }
         }
     }

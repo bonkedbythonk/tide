@@ -61,7 +61,7 @@ struct AmbientVideo: View {
             }
             VideoSurface(role: .nowPlaying)
                 .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-            if player.isLoading { ProgressView().controlSize(.large) }
+            if player.isLoading || player.videoLoading { ProgressView().controlSize(.large) }
         }
         .aspectRatio(16 / 9, contentMode: .fit)
     }
@@ -88,7 +88,7 @@ struct VideoFullscreenView: View {
                     .contentShape(Rectangle())
                     .onTapGesture(count: 2) { router.exitVideoFullscreen() }
                     .onTapGesture { player.toggle(); poke() }
-                if player.isLoading { ProgressView().controlSize(.large) }
+                if player.isLoading || player.videoLoading { ProgressView().controlSize(.large) }
 
                 if showLyrics {
                     lyricLine(s).task(id: s.id) { await lyrics.load(s, duration: player.duration) }
@@ -237,7 +237,7 @@ struct VideoMiniPlayer: View {
     var body: some View {
         ZStack {
             VideoSurface(role: .mini)
-            if player.isLoading { ProgressView() }
+            if player.isLoading || player.videoLoading { ProgressView() }
             // Clicks land on this layer; the video itself is AppKit.
             Color.clear
                 .contentShape(Rectangle())

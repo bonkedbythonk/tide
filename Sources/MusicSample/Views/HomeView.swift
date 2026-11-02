@@ -131,28 +131,25 @@ struct SectionHeader: View {
     }
 }
 
-/// Mockup of phone handoff. Real version needs the companion iPhone app.
+/// What the iPhone app is playing by itself, with a button to carry on here.
 struct ContinueBanner: View {
-    @Environment(Library.self) private var library
-    @Environment(Player.self) private var player
+    @Environment(RemoteServer.self) private var remote
     @Environment(HomeConfig.self) private var home
 
     var body: some View {
-        if home.showContinueBanner, let song = library.home.first?.songs.dropFirst(3).first {
+        if home.showContinueBanner, let state = remote.phone, let link = state.song {
+            let song = Song(link)
             HStack(spacing: 12) {
                 Image(systemName: "iphone").font(.title2).foregroundStyle(Color.accentColor)
                 Artwork(hue: song.hue, url: song.artwork, side: 40, radius: 5)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Continue from iPhone").font(.headline)
-                    Text("\(song.title) — \(song.artist) · paused at 1:42 (mockup)")
+                    Text("Continue from \(remote.phoneName)").font(.headline)
+                    Text("\(song.title) — \(song.artist) · " + (state.playing ? "playing" : "paused at \(formatTime(state.position))"))
                         .font(.subheadline).foregroundStyle(.secondary)
                 }
                 Spacer()
-                Button("Resume Here") {
-                    player.resume(song, at: 102)
-                    withAnimation { home.showContinueBanner = false }
-                }
-                .buttonStyle(PillButtonStyle(prominent: true))
+                Button("Resume Here") { remote.pullFromPhone() }
+                    .buttonStyle(PillButtonStyle(prominent: true))
                 Button { withAnimation { home.showContinueBanner = false } } label: {
                     Image(systemName: "xmark")
                 }
@@ -160,7 +157,6 @@ struct ContinueBanner: View {
             }
             .padding(12)
             .background(RoundedRectangle(cornerRadius: 12).fill(Color.primary.opacity(0.05)))
-            .help("Mockup: needs the companion iPhone app")
         }
     }
 }

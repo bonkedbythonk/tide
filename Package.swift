@@ -12,9 +12,11 @@ let package = Package(
     targets: [
         .executableTarget(
             name: "MusicSample",
-            dependencies: [.product(name: "MPVKit-GPL", package: "MPVKit")],
+            dependencies: [.product(name: "MPVKit-GPL", package: "MPVKit"), "TideLink"],
             path: "Sources/MusicSample",
             swiftSettings: [.swiftLanguageMode(.v5)]
-        )
+        ),
+        // The protocol shared with the iPhone app (iOS/), which compiles these sources directly.
+        .target(name: "TideLink", path: "Sources/TideLink", swiftSettings: [.swiftLanguageMode(.v5)]),
     ]
 )

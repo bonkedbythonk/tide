@@ -78,8 +78,9 @@ actor StreamResolver {
         recentRequests.append(.now)
         let format = low ? "ba[ext=m4a][abr<=64]/ba[ext=m4a]" : "ba[ext=m4a][abr<=160]/ba[ext=m4a]"
         do {
-            let streams = try await (try? Self.run(videoId, video: false, maxHeight: 0, client: "web_embedded", format: format))
-                ?? Self.run(videoId, video: false, maxHeight: 0, client: nil, format: format)
+            var streams = try? await Self.run(videoId, video: false, maxHeight: 0, client: "web_embedded", format: format)
+            if streams == nil { streams = try await Self.run(videoId, video: false, maxHeight: 0, client: nil, format: format) }
+            guard let streams else { throw Failure.missingTool }
             let wait = streams.availableAt.timeIntervalSinceNow + 0.2
             if wait > 0 { try await Task.sleep(for: .seconds(wait)) }
             let (data, response) = try await URLSession.shared.data(from: streams.audio)

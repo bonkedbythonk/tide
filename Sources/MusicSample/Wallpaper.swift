@@ -212,7 +212,7 @@ import SwiftUI
         let ns = NSColor(srgbRed: r / total, green: g / total, blue: b / total, alpha: 1)
         var h: CGFloat = 0, s: CGFloat = 0, v: CGFloat = 0
         ns.getHue(&h, saturation: &s, brightness: &v, alpha: nil)
-        return Color(hue: h, saturation: min(0.4, s * 1.1 + 0.05), brightness: 0.26)
+        return Color(hue: h, saturation: min(0.22, s * 0.8), brightness: 0.17)
     }
 
     /// Draws the image into one pixel and reads its luma.
@@ -257,7 +257,7 @@ struct PanelBackground: View {
     var body: some View {
         ZStack {
             WallpaperBackground()
-            (wallpaper.tint ?? .black).opacity(0.6)
+            (wallpaper.tint ?? .black).opacity(0.7)
         }
         .allowsHitTesting(false)
     }

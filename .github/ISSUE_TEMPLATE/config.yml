@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/bonkedbythonk/tide/security/advisories/new
+    about: Report privately. Do not open a public issue for security problems.
+  - name: Copyright concerns
+    url: https://github.com/bonkedbythonk/tide/blob/main/DISCLAIMER.md
+    about: Tide hosts no content. Read the disclaimer before filing.

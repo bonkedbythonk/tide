@@ -1,0 +1,48 @@
+name: Bug report
+description: Something in Tide is broken or behaves wrongly.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. If songs won't play, run `brew upgrade yt-dlp` first; most playback failures are an outdated yt-dlp.
+        Security problems go through [a private advisory](https://github.com/bonkedbythonk/tide/security/advisories/new), not here.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open ...
+        2. Press ...
+        3. See ...
+    validations:
+      required: false
+  - type: input
+    id: commit
+    attributes:
+      label: Tide commit
+      description: Run `git rev-parse --short HEAD` in your clone.
+      placeholder: "8b86e2b"
+    validations:
+      required: true
+  - type: input
+    id: os-version
+    attributes:
+      label: macOS version
+      placeholder: "macOS 26.0"
+    validations:
+      required: true
+  - type: input
+    id: ytdlp-version
+    attributes:
+      label: yt-dlp version
+      description: Run `yt-dlp --version`.
+    validations:
+      required: false

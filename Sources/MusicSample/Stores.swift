@@ -134,7 +134,7 @@ enum SleepTimer: String, CaseIterable, Identifiable {
                 self.engine.load(audio: streams.audio, video: streams.video, start: start, paused: !autoplay,
                                  gainDb: self.matchLoudness ? streams.gainDb : 0)
                 self.isLoading = false
-                await self.resolver.prefetch(self.upNext.prefix(2).map(\.id), video: video, maxHeight: height)
+                await self.resolver.prefetch(self.upNext.prefix(10).map(\.id), video: video, maxHeight: height)
             } catch {
                 guard token == self.loadToken else { return }
                 self.isLoading = false

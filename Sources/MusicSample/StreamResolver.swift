@@ -61,10 +61,35 @@ actor StreamResolver {
         return streams
     }
 
+    private var prefetchQueue: [(id: String, video: Bool, maxHeight: Int)] = []
+    private var prefetchesRunning = 0
+
+    /// Resolves songs in the background, two at a time, so a long queue doesn't
+    /// start a crowd of yt-dlp processes at once. Newer requests go first.
     func prefetch(_ videoIds: [String], video: Bool, maxHeight: Int) {
-        for id in videoIds {
-            Task { _ = try? await resolve(id, video: video, maxHeight: maxHeight) }
+        let fresh = videoIds.filter { id in
+            let key = id + (video ? "#v\(maxHeight)" : "#a")
+            let cached = cache[key].map { $0.resolvedAt.timeIntervalSinceNow > -4 * 3600 } ?? false
+            return !cached && inFlight[key] == nil && !prefetchQueue.contains { $0.id == id && $0.video == video }
         }
+        prefetchQueue.insert(contentsOf: fresh.map { ($0, video, maxHeight) }, at: 0)
+        pumpPrefetch()
+    }
+
+    private func pumpPrefetch() {
+        while prefetchesRunning < 2, !prefetchQueue.isEmpty {
+            let next = prefetchQueue.removeFirst()
+            prefetchesRunning += 1
+            Task {
+                _ = try? await resolve(next.id, video: next.video, maxHeight: next.maxHeight)
+                prefetchFinished()
+            }
+        }
+    }
+
+    private func prefetchFinished() {
+        prefetchesRunning -= 1
+        pumpPrefetch()
     }
 
     /// YouTube Music plays loud masters quieter: it measures each track (LKFS) and

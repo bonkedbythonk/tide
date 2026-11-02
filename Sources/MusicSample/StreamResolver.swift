@@ -38,7 +38,15 @@ actor StreamResolver {
         let key = videoId + (video ? "#v\(maxHeight)" : "#a")
         if let hit = cache[key], hit.resolvedAt.timeIntervalSinceNow > -4 * 3600 { return hit }
         if let running = inFlight[key] { return try await running.value }
-        let task = Task { try await Self.run(videoId, video: video, maxHeight: maxHeight) }
+        let task = Task {
+            // Audio: the embedded-player client's links work immediately, the default
+            // client's only after a ~5 s wait. Videos stay on the default client, which
+            // has HD; the embedded one stops around 720p.
+            if !video, let fast = try? await Self.run(videoId, video: false, maxHeight: maxHeight, client: "web_embedded") {
+                return fast
+            }
+            return try await Self.run(videoId, video: video, maxHeight: maxHeight, client: nil)
+        }
         inFlight[key] = task
         defer { inFlight[key] = nil }
         let streams = try await task.value
@@ -52,13 +60,13 @@ actor StreamResolver {
         }
     }
 
-    private static func run(_ videoId: String, video: Bool, maxHeight: Int) async throws -> Streams {
+    private static func run(_ videoId: String, video: Bool, maxHeight: Int, client: String?) async throws -> Streams {
         guard let executable else { throw Failure.missingTool }
         let format = video ? "bv*[height<=\(maxHeight)]+ba/b[height<=\(maxHeight)]/b" : "ba/b"
         let page = video ? "https://www.youtube.com/watch?v=" : "https://music.youtube.com/watch?v="
         let process = Process()
         process.executableURL = executable
-        process.arguments = [
+        process.arguments = (client.map { ["--extractor-args", "youtube:player_client=\($0)"] } ?? []) + [
             "--no-warnings", "--no-playlist", "-f", format,
             "--print", "%(requested_formats.0.available_at,available_at|0)s",
             "--print", "%(requested_formats.0.url,url)s",

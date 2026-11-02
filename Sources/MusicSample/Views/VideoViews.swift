@@ -48,6 +48,7 @@ struct AmbientVideo: View {
 
 struct VideoFullscreenView: View {
     @Environment(Player.self) private var player
+    @Environment(LyricsStore.self) private var lyrics
     @Environment(Router.self) private var router
     @State private var controlsVisible = true
     @State private var hideTask: Task<Void, Never>?
@@ -68,7 +69,9 @@ struct VideoFullscreenView: View {
                     .onTapGesture { player.toggle(); poke() }
                 if player.isLoading { ProgressView().controlSize(.large) }
 
-                if showLyrics { lyricLine(s) }
+                if showLyrics {
+                    lyricLine(s).task(id: s.id) { await lyrics.load(s, duration: player.duration) }
+                }
                 controls(s).opacity(controlsVisible ? 1 : 0)
             }
         }
@@ -167,8 +170,10 @@ struct VideoFullscreenView: View {
     }
 
     private func lyricLine(_ s: Song) -> some View {
-        let lines = FakeLyrics.lines(for: s)
-        let line = lines.last { $0.time <= player.position }?.text ?? ""
+        var line = ""
+        if case .synced(let lines) = lyrics.result(for: s.id) {
+            line = lines.last { $0.time <= player.position + 0.25 }?.text ?? ""
+        }
         return Text(line)
             .font(.system(size: 30, weight: .bold))
             .foregroundStyle(.white)

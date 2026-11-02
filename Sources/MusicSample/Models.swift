@@ -1,6 +1,6 @@
 import SwiftUI
 
-struct Song: Identifiable, Hashable {
+struct Song: Identifiable, Hashable, Codable {
     /// YouTube videoId.
     let id: String
     let title: String
@@ -16,8 +16,8 @@ struct Song: Identifiable, Hashable {
 }
 
 /// Anything that opens a page: playlist, album, artist, mix.
-struct MediaItem: Identifiable, Hashable {
-    enum Kind: Hashable { case playlist, album, artist, mix, other }
+struct MediaItem: Identifiable, Hashable, Codable {
+    enum Kind: Hashable, Codable { case playlist, album, artist, mix, other }
 
     /// browseId, e.g. "VLPL…", "MPREb_…", "UC…".
     let id: String
@@ -29,7 +29,7 @@ struct MediaItem: Identifiable, Hashable {
     var hue: Double { Double(id.stableHash % 1000) / 1000 }
 }
 
-enum ShelfItem: Identifiable, Hashable {
+enum ShelfItem: Identifiable, Hashable, Codable {
     case song(Song, video: Bool)
     case media(MediaItem)
 
@@ -41,7 +41,7 @@ enum ShelfItem: Identifiable, Hashable {
     }
 }
 
-struct HomeShelf: Identifiable {
+struct HomeShelf: Identifiable, Codable {
     let title: String
     let items: [ShelfItem]
 
@@ -58,15 +58,17 @@ struct HomeShelf: Identifiable {
     }
 }
 
-struct PageData {
+struct PageData: Codable {
     let id: String
     let title: String
     let subtitle: String
     let artwork: URL?
     var songs: [Song]
+    /// YouTube's suggested songs for a playlist, shown separately, never mixed in.
+    var suggestions: [Song]?
 }
 
-struct LyricLine: Hashable {
+struct LyricLine: Hashable, Codable {
     let time: TimeInterval
     let text: String
 }
@@ -113,35 +115,34 @@ enum SongDrag {
     }
 }
 
-/// Placeholder lyrics until real ones are fetched.
-enum FakeLyrics {
-    static let phrases = [
-        "I keep the porch light on for you", "Counting cars along the highway",
-        "Your voice is a radio through the static", "We were young and running out of time",
-        "Paint the ceiling gold tonight", "Every street still knows your name",
-        "Hold on, the morning's coming", "Nothing left but the echo",
-        "Dancing slow in an empty room", "Let the rain wash over us",
-        "I hear the ocean in your sleep", "Burn it down and start again",
-        "Follow the signal home", "Say it like you mean it this time",
-        "Sunday mornings never felt so loud", "Under the neon we disappear",
-    ]
+/// JSON snapshots on disk, so Home and playlists show instantly on launch while
+/// fresh copies load in the background.
+enum DiskCache {
+    private static let directory: URL = {
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        let dir = base.appendingPathComponent("MusicApp/cache", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }()
+    private static let queue = DispatchQueue(label: "disk cache", qos: .utility)
 
-    private static var cache: [String: [LyricLine]] = [:]
+    private static func file(_ name: String) -> URL {
+        let safe = name.map { $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" ? $0 : "_" }
+        return directory.appendingPathComponent(String(safe) + ".json")
+    }
 
-    static func lines(for song: Song) -> [LyricLine] {
-        if let cached = cache[song.id] { return cached }
-        var rng = SeededRNG(seed: song.id.stableHash)
-        let verse = (0..<4).map { _ in phrases.randomElement(using: &rng)! }
-        let chorus = (0..<4).map { _ in phrases.randomElement(using: &rng)! }
-        let order = verse + chorus + verse.reversed() + chorus + chorus
-        let length = song.playDuration
-        var lines: [LyricLine] = []
-        var t: TimeInterval = 6
-        for text in order where t < length - 6 {
-            lines.append(LyricLine(time: t, text: text))
-            t += length / Double(order.count + 2)
-        }
-        cache[song.id] = lines
-        return lines
+    static func load<T: Decodable>(_ type: T.Type, _ name: String) -> T? {
+        guard let data = try? Data(contentsOf: file(name)) else { return nil }
+        return try? JSONDecoder().decode(type, from: data)
+    }
+
+    static func save<T: Encodable>(_ value: T, _ name: String) {
+        guard let data = try? JSONEncoder().encode(value) else { return }
+        let url = file(name)
+        queue.async { try? data.write(to: url, options: .atomic) }
+    }
+
+    static func clear() {
+        queue.async { try? FileManager.default.removeItem(at: directory) }
     }
 }

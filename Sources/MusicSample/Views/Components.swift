@@ -334,3 +334,19 @@ struct Shelf<Content: View>: View {
         .onHover { router.pointerOverShelf = $0 }
     }
 }
+
+/// Runs `action` once the pointer has rested on the view for a moment.
+struct OnDwell: ViewModifier {
+    let action: () -> Void
+    @State private var hovering = false
+
+    func body(content: Content) -> some View {
+        content
+            .stableHover { hovering = $0 }
+            .task(id: hovering) {
+                guard hovering else { return }
+                try? await Task.sleep(for: .milliseconds(250))
+                if !Task.isCancelled { action() }
+            }
+    }
+}

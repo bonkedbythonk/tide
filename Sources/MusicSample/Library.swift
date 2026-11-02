@@ -20,19 +20,44 @@ import SwiftUI
     @ObservationIgnored private var homeContinuation: String?
     @ObservationIgnored private var loadingHome = false
     @ObservationIgnored private var loadingPages: Set<String> = []
+    /// Pages fetched fresh this session; others may still be showing the disk copy.
+    @ObservationIgnored private var freshPages: Set<String> = []
+
+    private struct Snapshot: Codable {
+        let home: [HomeShelf]
+        let playlists: [MediaItem]
+        let savedAlbums: [MediaItem]
+    }
     @ObservationIgnored private var toastToken = 0
 
     static let likedID = "VLLM"
 
     @MainActor
     func start() async {
-        state = await client.loadCookies() ? .loading : .signedOut
-        if state == .loading { await refresh() }
+        guard await client.loadCookies() else {
+            state = .signedOut
+            return
+        }
+        // Last session's library shows at once; the refresh below replaces it.
+        if let snapshot = DiskCache.load(Snapshot.self, "library") {
+            home = snapshot.home
+            playlists = snapshot.playlists
+            savedAlbums = snapshot.savedAlbums
+            home.forEach { $0.songs.forEach(remember) }
+            if let likedPage = DiskCache.load(PageData.self, "page2-" + Self.likedID) {
+                liked = Set(likedPage.songs.map(\.id))
+            }
+            state = .ready
+        } else {
+            state = .loading
+        }
+        await refresh()
     }
 
     @MainActor
     func refresh() async {
         if home.isEmpty { state = .loading }
+        freshPages = []
         do {
             async let homeJSON = client.browse("FEmusic_home")
             async let playlistJSON = client.browse("FEmusic_liked_playlists")
@@ -46,9 +71,11 @@ import SwiftUI
             home.forEach { $0.songs.forEach(remember) }
             state = .ready
             await loadMoreHome(pages: 3)
+            DiskCache.save(Snapshot(home: home, playlists: playlists, savedAlbums: savedAlbums), "library")
             if let likedPage = await page(Self.likedID) { liked = Set(likedPage.songs.map(\.id)) }
         } catch {
-            state = .failed(error.localizedDescription)
+            // With a cached library on screen, a failed refresh just leaves it there.
+            if home.isEmpty { state = .failed(error.localizedDescription) }
         }
     }
 
@@ -71,28 +98,45 @@ import SwiftUI
     /// A playlist, album, mix or artist page, with every song (up to 2,000).
     @MainActor
     func page(_ id: String) async -> PageData? {
-        if let cached = pages[id] { return cached }
-        guard !loadingPages.contains(id) else { return nil }
+        if pages[id] == nil, let cached = DiskCache.load(PageData.self, "page2-" + id) {
+            cached.songs.forEach(remember)
+            pages[id] = cached
+        }
+        if freshPages.contains(id) { return pages[id] }
+        guard !loadingPages.contains(id) else { return pages[id] }
         loadingPages.insert(id)
         defer { loadingPages.remove(id) }
+        // With a disk copy on screen, swap in the fresh list only once it's complete,
+        // so a long playlist doesn't shrink to its first 100 songs and grow back.
+        let showProgress = pages[id] == nil
         do {
             let json = try await client.browse(id)
-            var data = YTParse.page(json, id: id)
-            pages[id] = data
-            var token = YTParse.continuation(json)
+            let parsed = YTParse.page(json, id: id)
+            var data = parsed.data
+            if showProgress { pages[id] = data }
+            var token = parsed.more
             while let t = token, data.songs.count < 2000 {
                 let next = try await client.more(t)
                 let more = YTParse.songs(next)
                 guard !more.isEmpty else { break }
                 data.songs += more
-                pages[id] = data
+                if showProgress { pages[id] = data }
                 token = YTParse.continuation(next)
             }
+            if data.suggestions?.isEmpty != false, let t = parsed.suggestions,
+               let next = try? await client.more(t) {
+                data.suggestions = YTParse.songs(next)
+            }
             data.songs.forEach(remember)
+            data.suggestions?.forEach(remember)
+            pages[id] = data
+            freshPages.insert(id)
+            DiskCache.save(data, "page2-" + id)
+            if id == Self.likedID { liked = Set(data.songs.map(\.id)) }
             return data
         } catch {
-            showToast("Couldn't load: \(error.localizedDescription)")
-            return nil
+            if pages[id] == nil { showToast("Couldn't load: \(error.localizedDescription)") }
+            return pages[id]
         }
     }
 
@@ -111,6 +155,8 @@ import SwiftUI
     @MainActor
     func signOut() async {
         await YTClient.signOut()
+        DiskCache.clear()
+        freshPages = []
         home = []
         playlists = []
         savedAlbums = []

@@ -2,7 +2,16 @@ import AppKit
 import SwiftUI
 
 
-enum RepeatMode { case off, all, one }
+enum RepeatMode: String { case off, all, one }
+
+enum Prefs {
+    private static let d = UserDefaults.standard
+    static func double(_ key: String, _ fallback: Double) -> Double { d.object(forKey: key) as? Double ?? fallback }
+    static func int(_ key: String, _ fallback: Int) -> Int { d.object(forKey: key) as? Int ?? fallback }
+    static func bool(_ key: String) -> Bool { d.bool(forKey: key) }
+    static func string(_ key: String) -> String? { d.string(forKey: key) }
+    static func set(_ value: Any, _ key: String) { d.set(value, forKey: key) }
+}
 
 enum EQPreset: String, CaseIterable, Identifiable {
     case flat = "Flat", bass = "Bass boost", vocal = "Vocal", treble = "Treble boost", night = "Late night"
@@ -23,13 +32,18 @@ enum SleepTimer: String, CaseIterable, Identifiable {
     var position: TimeInterval = 0
     var duration: TimeInterval = 0
     var lastError: String?
-    var volume = 0.7 { didSet { applyVolume() } }
-    var shuffle = false
-    var repeatMode = RepeatMode.off
+    // Player settings are kept between launches.
+    var volume = Prefs.double("volume", 0.7) {
+        didSet { applyVolume(); Prefs.set(volume, "volume") }
+    }
+    var shuffle = Prefs.bool("shuffle") { didSet { Prefs.set(shuffle, "shuffle") } }
+    var repeatMode = RepeatMode(rawValue: Prefs.string("repeat") ?? "") ?? .off {
+        didSet { Prefs.set(repeatMode.rawValue, "repeat") }
+    }
     var crossfade = 0.0
     var gapless = true
     var eq = EQPreset.flat
-    var normalize = false { didSet { applyFilters() } }
+    var normalize = Prefs.bool("normalize") { didSet { applyFilters(); Prefs.set(normalize, "normalize") } }
     var sleepTimer = SleepTimer.off
     var device = "This Mac"
     var skipForward = true
@@ -43,8 +57,9 @@ enum SleepTimer: String, CaseIterable, Identifiable {
     }
 
     /// Highest video resolution to ask for (Pear's quality-changer).
-    var videoQuality = 1080 {
+    var videoQuality = Prefs.int("videoQuality", 1080) {
         didSet {
+            Prefs.set(videoQuality, "videoQuality")
             guard oldValue != videoQuality, videoMode, current != nil else { return }
             load(at: position, autoplay: isPlaying)
         }
@@ -402,5 +417,22 @@ enum ClickToPlay {
             }
         }
         check()
+    }
+}
+
+/// Space plays and pauses anywhere in the app, except while typing in a text field
+/// (search, filter, the playlist picker).
+enum SpaceToPlay {
+    private static var monitor: Any?
+
+    static func install(player: Player) {
+        guard monitor == nil else { return }
+        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            guard event.keyCode == 49,
+                  event.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty,
+                  !(event.window?.firstResponder is NSText) else { return event }
+            player.toggle()
+            return nil
+        }
     }
 }

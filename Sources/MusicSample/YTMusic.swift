@@ -286,7 +286,21 @@ enum YTParse {
         return dig(first("nextContinuationData", in: json), "continuation") as? String
     }
 
-    static func page(_ json: JSON, id: String) -> PageData {
+    /// A page's own song list, kept apart from the "Suggestions" YouTube shows under
+    /// a playlist. `more` pages through the list itself; `suggestions` fetches the
+    /// section after it, where the suggested songs live.
+    struct ParsedPage {
+        var data: PageData
+        var more: String?
+        var suggestions: String?
+    }
+
+    private static func isSuggestionShelf(_ shelf: JSON) -> Bool {
+        let title = text(first("title", in: shelf["header"]) ?? shelf["title"]).lowercased()
+        return title.contains("suggest") || title.contains("recommend")
+    }
+
+    static func page(_ json: JSON, id: String) -> ParsedPage {
         let header = (first("musicResponsiveHeaderRenderer", in: json)
             ?? first("musicDetailHeaderRenderer", in: json)
             ?? first("musicImmersiveHeaderRenderer", in: json)
@@ -295,7 +309,10 @@ enum YTParse {
         let strap = text(header["straplineTextOne"])
         let subtitle = strap.isEmpty ? text(header["subtitle"]) : strap
         let art = thumbnail(header["thumbnail"] ?? header["foregroundThumbnail"]).url
-        var list = songs(json)
+        let mainShelf = findAll("musicPlaylistShelfRenderer", in: json).first
+            ?? findAll("musicShelfRenderer", in: json).first { !isSuggestionShelf($0) }
+        let suggestionShelf = findAll("musicShelfRenderer", in: json).first(where: isSuggestionShelf)
+        var list = mainShelf.map(songs) ?? []
         // Album tracks come without cover or album name; fill them from the header.
         if id.hasPrefix("MPRE") {
             list = list.map { s in
@@ -305,7 +322,14 @@ enum YTParse {
                 return s
             }
         }
-        return PageData(id: id, title: title, subtitle: subtitle, artwork: art, songs: list)
+        var data = PageData(id: id, title: title, subtitle: subtitle, artwork: art, songs: list)
+        data.suggestions = suggestionShelf.map(songs)
+        let sectionList = findAll("sectionListRenderer", in: json).last
+        return ParsedPage(
+            data: data,
+            more: mainShelf.flatMap(continuation),
+            suggestions: sectionList.flatMap { continuation(["c": $0["continuations"] ?? []]) }
+        )
     }
 
     /// Search results: songs plus albums, artists and playlists.

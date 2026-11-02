@@ -323,42 +323,75 @@ struct QueueRow: View {
 /// Synced lyrics: current line highlighted and kept centred; click a line to jump there.
 struct LyricsView: View {
     @Environment(Player.self) private var player
+    @Environment(LyricsStore.self) private var lyrics
     var fontSize: CGFloat = 20
 
     var body: some View {
         if let song = player.current {
-            let lines = FakeLyrics.lines(for: song)
-            let currentIndex = lines.lastIndex { $0.time <= player.position } ?? -1
-            ScrollViewReader { proxy in
-                ScrollView {
-                    VStack(alignment: .leading, spacing: fontSize * 0.75) {
-                        ForEach(lines.indices, id: \.self) { i in
-                            Text(lines[i].text)
-                                .font(.system(size: fontSize, weight: .bold))
-                                .foregroundStyle(i == currentIndex ? Color.primary : Color.secondary)
-                                .opacity(i == currentIndex ? 1 : (i < currentIndex ? 0.4 : 0.7))
-                                .scaleEffect(i == currentIndex ? 1.03 : 1, anchor: .leading)
-                                .id(i)
-                                .onTapGesture { player.seek(lines[i].time) }
-                        }
-                        Text("Placeholder lyrics. Real ones would come from YouTube Music or LRCLIB.")
-                            .font(.caption).foregroundStyle(.tertiary).padding(.top, 20)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 140)
-                    .animation(.easeOut(duration: 0.25), value: currentIndex)
+            Group {
+                switch lyrics.result(for: song.id) {
+                case .synced(let lines): synced(lines)
+                case .plain(let text): plain(text)
+                case .instrumental: message("Instrumental", "pianokeys")
+                case .some(.none): message("No lyrics found for this song", "text.badge.xmark")
+                case nil: ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
-                .scrollIndicators(.hidden)
-                .onChange(of: currentIndex) { _, i in
-                    withAnimation(.easeInOut(duration: 0.4)) { proxy.scrollTo(max(i, 0), anchor: .center) }
-                }
-                .onAppear { proxy.scrollTo(max(currentIndex, 0), anchor: .center) }
             }
             .id(song.id)
+            .transition(.opacity)
+            .task(id: song.id) {
+                // Give mpv a moment to report the length; it picks the right LRCLIB version.
+                for _ in 0..<15 where player.duration <= 0 { try? await Task.sleep(for: .milliseconds(200)) }
+                await lyrics.load(song, duration: player.duration)
+            }
         } else {
             ContentUnavailableView("Nothing playing", systemImage: "music.note")
         }
+    }
+
+    private func synced(_ lines: [LyricLine]) -> some View {
+        // A little ahead of the audio, so a line lights up as it's sung, not after.
+        let currentIndex = lines.lastIndex { $0.time <= player.position + 0.25 } ?? -1
+        return ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: fontSize * 0.75) {
+                    ForEach(lines.indices, id: \.self) { i in
+                        Text(lines[i].text)
+                            .font(.system(size: fontSize, weight: .bold))
+                            .foregroundStyle(i == currentIndex ? Color.primary : Color.secondary)
+                            .opacity(i == currentIndex ? 1 : (i < currentIndex ? 0.4 : 0.7))
+                            .scaleEffect(i == currentIndex ? 1.03 : 1, anchor: .leading)
+                            .id(i)
+                            .onTapGesture { player.seek(lines[i].time) }
+                    }
+                    Text("Lyrics from LRCLIB").font(.caption).foregroundStyle(.tertiary).padding(.top, 20)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 140)
+                .animation(.easeOut(duration: 0.25), value: currentIndex)
+            }
+            .scrollIndicators(.hidden)
+            .onChange(of: currentIndex) { _, i in
+                withAnimation(.easeInOut(duration: 0.4)) { proxy.scrollTo(max(i, 0), anchor: .center) }
+            }
+            .onAppear { proxy.scrollTo(max(currentIndex, 0), anchor: .center) }
+        }
+    }
+
+    private func plain(_ text: String) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Not synced").font(.caption).foregroundStyle(.tertiary)
+                Text(text).font(.system(size: fontSize * 0.8, weight: .semibold)).foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(20)
+        }
+    }
+
+    private func message(_ text: String, _ symbol: String) -> some View {
+        ContentUnavailableView(text, systemImage: symbol)
     }
 }
 

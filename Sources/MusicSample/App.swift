@@ -7,6 +7,7 @@ struct MusicSampleApp: App {
     @State private var player = Player()
     @State private var router = Router()
     @State private var home = HomeConfig()
+    @State private var lyrics = LyricsStore()
 
     init() {
         NSApplication.shared.setActivationPolicy(.regular)
@@ -20,14 +21,15 @@ struct MusicSampleApp: App {
                 .environment(player)
                 .environment(router)
                 .environment(home)
+                .environment(lyrics)
                 .frame(minWidth: 1000, minHeight: 640)
                 .onAppear { NSApp.activate(ignoringOtherApps: true) }
         }
         .defaultSize(width: 1280, height: 820)
         .commands {
             CommandMenu("Playback") {
-                Button(player.isPlaying ? "Pause" : "Play") { player.toggle() }
-                    .keyboardShortcut(.space, modifiers: [])
+                // Space is handled by SpaceToPlay, so typing a space in a text field still works.
+                Button(player.isPlaying ? "Pause  (Space)" : "Play  (Space)") { player.toggle() }
                 Button("Next Song") { player.next() }
                     .keyboardShortcut(.rightArrow, modifiers: .command)
                 Button("Previous Song") { player.previous() }
@@ -72,7 +74,7 @@ struct RootView: View {
                             .zIndex(1)
                     }
                 }
-                .animation(.easeOut(duration: 0.18), value: router.current)
+                .animation(.easeOut(duration: 0.22), value: router.current)
                 .inspector(isPresented: Binding(
                     get: { router.panelVisible && !router.showNowPlaying },
                     set: { router.panelVisible = $0 }
@@ -113,7 +115,10 @@ struct RootView: View {
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
-        .onAppear { swipe.install(router: router, player: player) }
+        .onAppear {
+            swipe.install(router: router, player: player)
+            SpaceToPlay.install(player: player)
+        }
         .task { await library.start() }
     }
 }
@@ -148,7 +153,10 @@ struct DetailView: View {
                 }
             }
         }
-        .transition(.opacity.combined(with: .offset(y: 6)))
+        .transition(.asymmetric(
+            insertion: .opacity.combined(with: .offset(y: 10)),
+            removal: .opacity
+        ))
         .id(router.current)
         .navigationTitle(title)
     }

@@ -8,14 +8,18 @@ struct PageView: View {
     var fallbackTitle = ""
 
     var body: some View {
-        Group {
+        ZStack {
             if let page = library.pages[id] {
                 SongListView(page: page, songs: library.songs(in: id),
                              playlistID: library.playlist(id) != nil ? id : nil)
+                    .transition(.opacity.combined(with: .offset(y: 12)))
             } else {
-                ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+                ProgressView()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .transition(.opacity)
             }
         }
+        .animation(.spring(duration: 0.35, bounce: 0.1), value: library.pages[id] != nil)
         .task(id: id) { _ = await library.page(id) }
     }
 }
@@ -77,6 +81,9 @@ struct SongListView: View {
                         Text(item.title)
                             .foregroundStyle(currentID == item.id ? Color.accentColor : Color.primary)
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                    .modifier(OnDwell { player.prefetch(item.song) })
                 }
                 .width(min: 180, ideal: 300)
                 TableColumn("Artist", value: \.artist)
@@ -110,6 +117,8 @@ struct SongListView: View {
                 ClickToPlay.arm { player.play(s, in: visibleSongs) }
             }
         }
+        // Resolve the first songs now, so Play starts without waiting on yt-dlp.
+        .task(id: page.id) { songs.prefix(2).forEach { player.prefetch($0) } }
         .searchable(text: $filter, isPresented: $filterFocused, placement: .toolbar, prompt: "Filter songs")
         .background {
             Button("") { filterFocused = true }
@@ -136,6 +145,9 @@ struct SongListView: View {
                     .buttonStyle(.borderedProminent)
                     Button { player.playAll(visible, shuffled: true) } label: {
                         Label("Shuffle", systemImage: "shuffle")
+                    }
+                    if let suggestions = page.suggestions, !suggestions.isEmpty {
+                        SuggestionsButton(songs: suggestions)
                     }
                     if selection.count > 1 {
                         Text("\(selection.count) selected — drag them onto a playlist in the sidebar")
@@ -220,6 +232,26 @@ struct SearchView: View {
             guard !Task.isCancelled else { return }
             songs = result.songs
             items = result.items
+        }
+    }
+}
+
+/// YouTube's suggested songs for a playlist, kept apart from the playlist itself.
+/// Add the ones you want with + or by dragging them onto a playlist.
+struct SuggestionsButton: View {
+    let songs: [Song]
+    @State private var open = false
+
+    var body: some View {
+        Button { open = true } label: {
+            Label("Suggestions", systemImage: "sparkles")
+        }
+        .popover(isPresented: $open, arrowEdge: .bottom) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Suggested for this playlist").font(.headline).padding(.horizontal, 18).padding(.top, 14)
+                ScrollView { SongGrid(songs: songs).padding(.bottom, 12) }
+            }
+            .frame(width: 620, height: 420)
         }
     }
 }

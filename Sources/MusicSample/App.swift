@@ -8,6 +8,7 @@ struct MusicSampleApp: App {
     @State private var router = Router()
     @State private var home = HomeConfig()
     @State private var lyrics = LyricsStore()
+    @State private var wallpaper = WallpaperStore()
 
     init() {
         NSApplication.shared.setActivationPolicy(.regular)
@@ -22,10 +23,14 @@ struct MusicSampleApp: App {
                 .environment(router)
                 .environment(home)
                 .environment(lyrics)
+                .environment(wallpaper)
                 .frame(minWidth: 1000, minHeight: 640)
                 .onAppear { NSApp.activate(ignoringOtherApps: true) }
         }
         .defaultSize(width: 1280, height: 820)
+        Settings {
+            SettingsView().environment(wallpaper)
+        }
         .commands {
             CommandMenu("Playback") {
                 // Space is handled by SpaceToPlay, so typing a space in a text field still works.
@@ -58,6 +63,7 @@ struct RootView: View {
     @Environment(Library.self) private var library
     @Environment(Player.self) private var player
     @Environment(LyricsStore.self) private var lyrics
+    @Environment(WallpaperStore.self) private var wallpaper
     @Environment(Router.self) private var router
     @State private var swipe = SwipeTracker()
 
@@ -68,6 +74,7 @@ struct RootView: View {
                     .navigationSplitViewColumnWidth(min: 200, ideal: 230, max: 300)
             } detail: {
                 ZStack {
+                    WallpaperBackground()
                     DetailView()
                     if router.showNowPlaying {
                         NowPlayingView()
@@ -137,6 +144,7 @@ struct RootView: View {
             if let song = library.home.first?.songs.first { player.prefetch(song) }
         }
         // Lyrics load with every song, so Now Playing knows up front whether there are any.
+        .onChange(of: player.current?.id) { wallpaper.songChanged(cover: player.current?.artwork) }
         .task(id: player.current?.id) {
             guard let song = player.current else { return }
             for _ in 0..<15 where player.duration <= 0 { try? await Task.sleep(for: .milliseconds(200)) }

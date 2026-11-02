@@ -154,6 +154,7 @@ struct SongListView: View {
                       NSEvent.modifierFlags.isDisjoint(with: [.command, .shift]) else { return }
                 ClickToPlay.arm { play(s, visibleSongs, suggestedSongs) }
             }
+            .scrollContentBackground(.hidden)
             .opacity(appeared ? 1 : 0)
             .offset(y: appeared ? 0 : 28)
         }

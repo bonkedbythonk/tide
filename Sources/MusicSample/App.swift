@@ -131,6 +131,11 @@ struct RootView: View {
                                 .ignoresSafeArea()
                             }
                             .environment(\.colorScheme, .dark)
+                        // A quiet 1-pt hairline, as in anicat: the text colour at 10%.
+                        Rectangle()
+                            .fill(Color.white.opacity(0.10))
+                            .frame(width: 1)
+                            .ignoresSafeArea()
                         content
                     }
                 } else {

@@ -796,7 +796,7 @@ enum KeyboardShortcuts {
         case "r": player.cycleRepeat()
         case "v": if player.current != nil { player.videoMode.toggle() }
         case "f": if player.videoMode { router.videoFullscreen ? router.exitVideoFullscreen() : router.enterVideoFullscreen() }
-        case "n": if player.current != nil { withAnimation(.spring(duration: 0.45, bounce: 0.12)) { router.showNowPlaying.toggle() } }
+        case "n": if player.current != nil { withAnimation(.spring(duration: 0.45, bounce: 0)) { router.showNowPlaying.toggle() } }
         case "l": router.togglePanel(.lyrics)
         case "q": router.togglePanel(.queue)
         case "/": router.openSearch()

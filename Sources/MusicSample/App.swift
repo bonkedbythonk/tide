@@ -59,7 +59,7 @@ struct MusicSampleApp: App {
                     if let s = player.current { library.toggleLike(s.id) }
                 }
                 .keyboardShortcut("l", modifiers: .command)
-                Button("Now Playing") { withAnimation(.snappy) { router.showNowPlaying.toggle() } }
+                Button("Now Playing") { withAnimation(.spring(duration: 0.45, bounce: 0)) { router.showNowPlaying.toggle() } }
                     .keyboardShortcut("n", modifiers: [.command, .shift])
                 Button("Lyrics") { router.togglePanel(.lyrics) }
                     .keyboardShortcut("l", modifiers: [.command, .shift])
@@ -178,7 +178,7 @@ struct RootView: View {
                     .transition(.scale(scale: 0.85, anchor: .bottomTrailing).combined(with: .opacity))
             }
         }
-        .animation(.spring(duration: 0.4, bounce: 0.15), value: router.showNowPlaying)
+        .animation(.spring(duration: 0.4, bounce: 0), value: router.showNowPlaying)
         .onChange(of: player.videoMode) { _, on in if on { router.miniPlayerHidden = false } }
         .overlay {
             if router.videoFullscreen {

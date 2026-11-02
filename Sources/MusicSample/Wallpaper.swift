@@ -20,10 +20,11 @@ import SwiftUI
     }
 
     enum Shuffle: String, CaseIterable, Identifiable {
-        case everySong, every5Minutes, every30Minutes, manual
+        case matchSong, everySong, every5Minutes, every30Minutes, manual
         var id: String { rawValue }
         var label: String {
             switch self {
+            case .matchSong: "Every song, matching its cover"
             case .everySong: "Every song"
             case .every5Minutes: "Every 5 minutes"
             case .every30Minutes: "Every 30 minutes"
@@ -126,7 +127,50 @@ import SwiftUI
         switch source {
         case .coverArt: refresh()
         case .pinstill where shuffle == .everySong: shuffleNow()
+        case .pinstill where shuffle == .matchSong: matchCover()
         default: break
+        }
+    }
+
+    /// Shows the board picture whose colours come closest to the playing song's
+    /// cover, picking among the three closest so the same one doesn't always win.
+    /// Each picture's colour is measured once and kept on disk per board.
+    private func matchCover() {
+        guard source == .pinstill, let board = selectedBoard, let cover = coverURL else { return shuffleNow() }
+        let current = imageID
+        Task.detached(priority: .utility) { [weak self] in
+            guard let coverImage = await ImageDecodeCache.shared.image(cover, maxPixelSize: 64) else { return }
+            let target = Self.signature(coverImage)
+            let key = "board-colors-" + board.id
+            var known = DiskCache.load([String: [Double]].self, key) ?? [:]
+            let files = ((try? FileManager.default.contentsOfDirectory(at: board.folder, includingPropertiesForKeys: nil)) ?? [])
+                .filter { ["jpg", "jpeg", "png", "heic", "webp"].contains($0.pathExtension.lowercased()) }
+            var measured = false
+            for file in files where known[file.lastPathComponent] == nil {
+                guard let source = CGImageSourceCreateWithURL(file as CFURL, nil),
+                      let thumb = CGImageSourceCreateThumbnailAtIndex(source, 0, [
+                          kCGImageSourceCreateThumbnailFromImageAlways: true,
+                          kCGImageSourceThumbnailMaxPixelSize: 64,
+                      ] as CFDictionary) else { continue }
+                known[file.lastPathComponent] = Self.signature(thumb)
+                measured = true
+            }
+            if measured { DiskCache.save(known, key) }
+            func distance(_ c: [Double]) -> Double {
+                var sum = 0.0
+                for i in 0..<3 { sum += (c[i] - target[i]) * (c[i] - target[i]) }
+                return sum
+            }
+            var ranked: [(file: URL, distance: Double)] = []
+            for file in files where file.path != current {
+                if let c = known[file.lastPathComponent] { ranked.append((file, distance(c))) }
+            }
+            ranked.sort { $0.distance < $1.distance }
+            guard let pick = ranked.prefix(3).randomElement()?.file else { return }
+            await MainActor.run { [weak self] in
+                guard let self, self.coverURL == cover, self.shuffle == .matchSong else { return }
+                self.show(pick)
+            }
         }
     }
 
@@ -147,7 +191,7 @@ import SwiftUI
         case .off: show(nil)
         case .coverArt: show(coverURL)
         case .image: show(imagePath.flatMap { $0.isEmpty ? nil : URL(filePath: $0) })
-        case .pinstill: shuffleNow()
+        case .pinstill: shuffle == .matchSong ? matchCover() : shuffleNow()
         }
     }
 
@@ -192,15 +236,14 @@ import SwiftUI
         }
     }
 
-    /// The picture's most colourful common shade, toned down to sit behind white text:
-    /// pixels are averaged weighted by saturation, so a grey background doesn't win
-    /// over the coloured subject.
-    static func mainColor(_ image: CGImage) -> Color {
+    /// Average colour, weighted toward saturated pixels so a grey background
+    /// doesn't win over the coloured subject. RGB, 0 to 1.
+    static func signature(_ image: CGImage) -> [Double] {
         let side = 24
         var pixels = [UInt8](repeating: 0, count: side * side * 4)
         guard let context = CGContext(data: &pixels, width: side, height: side, bitsPerComponent: 8, bytesPerRow: side * 4,
                                       space: CGColorSpaceCreateDeviceRGB(),
-                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return .gray }
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return [0.5, 0.5, 0.5] }
         context.draw(image, in: CGRect(x: 0, y: 0, width: side, height: side))
         var r = 0.0, g = 0.0, b = 0.0, total = 0.0
         for i in stride(from: 0, to: pixels.count, by: 4) {
@@ -209,7 +252,13 @@ import SwiftUI
             let weight = (maxC - minC) + 0.05
             r += pr * weight; g += pg * weight; b += pb * weight; total += weight
         }
-        let ns = NSColor(srgbRed: r / total, green: g / total, blue: b / total, alpha: 1)
+        return [r / total, g / total, b / total]
+    }
+
+    /// The picture's main colour, toned down to sit behind white text.
+    static func mainColor(_ image: CGImage) -> Color {
+        let rgb = signature(image)
+        let ns = NSColor(srgbRed: rgb[0], green: rgb[1], blue: rgb[2], alpha: 1)
         var h: CGFloat = 0, s: CGFloat = 0, v: CGFloat = 0
         ns.getHue(&h, saturation: &s, brightness: &v, alpha: nil)
         return Color(hue: h, saturation: min(0.22, s * 0.8), brightness: 0.17)

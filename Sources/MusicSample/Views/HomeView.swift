@@ -70,7 +70,7 @@ struct ShelfContent: View {
                                   symbol: video ? "play.rectangle.fill" : "music.note",
                                   open: {
                                       player.play(s, in: videos)
-                                      if video { withAnimation(.snappy) { router.showNowPlaying = true } }
+                                      if video { withAnimation(.spring(duration: 0.45, bounce: 0)) { router.showNowPlaying = true } }
                                   },
                                   play: { player.play(s, in: videos) },
                                   prefetch: { player.prefetch(s, video: player.prefersVideo) })

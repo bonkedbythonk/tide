@@ -254,7 +254,7 @@ struct VideoMiniPlayer: View {
             Color.clear
                 .contentShape(Rectangle())
                 .onTapGesture(count: 2) { router.enterVideoFullscreen() }
-                .onTapGesture { withAnimation(.spring(duration: 0.45, bounce: 0.12)) { router.showNowPlaying = true } }
+                .onTapGesture { withAnimation(.spring(duration: 0.45, bounce: 0)) { router.showNowPlaying = true } }
             if hovering {
                 VStack {
                     HStack {

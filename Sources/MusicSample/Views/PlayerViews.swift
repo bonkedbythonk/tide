@@ -29,7 +29,7 @@ struct PlayerBar: View {
         .contentShape(Rectangle())
         .onTapGesture {
             guard player.current != nil else { return }
-            withAnimation(.spring(duration: 0.45, bounce: 0.12)) { router.showNowPlaying.toggle() }
+            withAnimation(.spring(duration: 0.45, bounce: 0)) { router.showNowPlaying.toggle() }
         }
     }
 }
@@ -541,7 +541,7 @@ struct NowPlayingView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
 
-            Button { withAnimation(.spring(duration: 0.45, bounce: 0.12)) { router.showNowPlaying = false } } label: {
+            Button { withAnimation(.spring(duration: 0.45, bounce: 0)) { router.showNowPlaying = false } } label: {
                 Image(systemName: "chevron.down").font(.title3.weight(.semibold)).padding(8)
             }
             .buttonStyle(.plain)

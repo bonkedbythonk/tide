@@ -30,6 +30,9 @@ actor StreamResolver {
     private var cache: [String: Streams] = [:]
     private var inFlight: [String: Task<Streams, Error>] = [:]
 
+    /// Your sign-in for yt-dlp (see YTClient.writeCookieFile); nil when signed out.
+    nonisolated(unsafe) static var cookieFile: URL?
+
     private static let searchPath = ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"]
 
     private static let executable: URL? = searchPath
@@ -40,6 +43,7 @@ actor StreamResolver {
         let key = videoId + (video ? "#v\(maxHeight)" : "#a")
         if let hit = cache[key], hit.resolvedAt.timeIntervalSinceNow > -4 * 3600 { return hit }
         if let running = inFlight[key] { return try await running.value }
+        recentRequests.append(.now)
         let task = Task {
             async let gain = Self.loudnessGain(videoId)
             var streams: Streams
@@ -56,13 +60,40 @@ actor StreamResolver {
         }
         inFlight[key] = task
         defer { inFlight[key] = nil }
-        let streams = try await task.value
-        cache[key] = streams
-        return streams
+        do {
+            let streams = try await task.value
+            cache[key] = streams
+            return streams
+        } catch {
+            noteFailure(error)
+            throw error
+        }
     }
 
     private var prefetchQueue: [(id: String, video: Bool, maxHeight: Int)] = []
     private var prefetchesRunning = 0
+
+    // Staying under YouTube's radar: it starts asking "are you a bot" when one place
+    // sends too many requests. Background resolving keeps to a budget and backs off;
+    // songs you actually play are never held back.
+    private var recentRequests: [Date] = []
+    private var backOffUntil = Date.distantPast
+    private static let backgroundPerMinute = 8
+    private static let backgroundSpacing: TimeInterval = 2
+    private static let backOff: TimeInterval = 15 * 60
+
+    private var backgroundAllowed: Bool {
+        recentRequests.removeAll { $0.timeIntervalSinceNow < -60 }
+        return Date() > backOffUntil && recentRequests.count < Self.backgroundPerMinute
+    }
+
+    private func noteFailure(_ error: Error) {
+        let text = error.localizedDescription
+        if text.contains("not a bot") || text.contains("429") || text.contains("Too Many Requests") {
+            backOffUntil = Date().addingTimeInterval(Self.backOff)
+            prefetchQueue.removeAll()
+        }
+    }
 
     /// Resolves songs in the background, one at a time: YouTube starts asking "are
     /// you a bot" when too many requests come from one place. Newer requests go first.
@@ -78,11 +109,12 @@ actor StreamResolver {
     }
 
     private func pumpPrefetch() {
-        while prefetchesRunning < 1, !prefetchQueue.isEmpty {
+        while prefetchesRunning < 1, !prefetchQueue.isEmpty, backgroundAllowed {
             let next = prefetchQueue.removeFirst()
             prefetchesRunning += 1
             Task {
                 _ = try? await resolve(next.id, video: next.video, maxHeight: next.maxHeight)
+                try? await Task.sleep(for: .seconds(Self.backgroundSpacing))
                 prefetchFinished()
             }
         }
@@ -97,6 +129,13 @@ actor StreamResolver {
     /// turns it down to a target of -14, never up. The iOS client's player response
     /// carries both numbers. Any failure means 0, i.e. play as mastered.
     private static func loudnessGain(_ videoId: String) async -> Double {
+        if let cached = DiskCache.load(Double.self, "gain-" + videoId) { return cached }
+        let gain = await fetchLoudnessGain(videoId)
+        if let gain { DiskCache.save(gain, "gain-" + videoId) }
+        return gain ?? 0
+    }
+
+    private static func fetchLoudnessGain(_ videoId: String) async -> Double? {
         var request = URLRequest(url: URL(string: "https://music.youtube.com/youtubei/v1/player?prettyPrint=false")!)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -109,7 +148,7 @@ actor StreamResolver {
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let audio = (json["playerConfig"] as? [String: Any])?["audioConfig"] as? [String: Any],
               let track = (audio["trackAbsoluteLoudnessLkfs"] ?? audio["perceptualLoudnessDb"]) as? Double
-        else { return 0 }
+        else { return nil }
         let target = audio["loudnessTargetLkfs"] as? Double ?? -14
         return min(0, target - track)
     }
@@ -117,7 +156,7 @@ actor StreamResolver {
     private static func run(_ videoId: String, video: Bool, maxHeight: Int, client: String?) async throws -> Streams {
         let format = video ? "bv*[height<=\(maxHeight)]+ba/b[height<=\(maxHeight)]/b" : "ba/b"
         let page = video ? "https://www.youtube.com/watch?v=" : "https://music.youtube.com/watch?v="
-        if let warm = await YTDLPWorker.shared.resolve(url: page + videoId, format: format, client: client),
+        if let warm = await YTDLPWorker.shared.resolve(url: page + videoId, format: format, client: client, cookies: cookieFile?.path),
            let first = warm.urls.first {
             let availableAt = Date(timeIntervalSince1970: warm.availableAt)
             // Separate video and audio streams come back as two URLs: video, then audio.
@@ -128,7 +167,8 @@ actor StreamResolver {
         guard let executable else { throw Failure.missingTool }
         let process = Process()
         process.executableURL = executable
-        process.arguments = (client.map { ["--extractor-args", "youtube:player_client=\($0)"] } ?? []) + [
+        process.arguments = (client.map { ["--extractor-args", "youtube:player_client=\($0)"] } ?? [])
+            + (cookieFile.map { ["--cookies", $0.path] } ?? []) + [
             "--no-warnings", "--no-playlist", "-f", format,
             "--print", "%(requested_formats.0.available_at,available_at|0)s",
             "--print", "%(requested_formats.0.url,url)s",

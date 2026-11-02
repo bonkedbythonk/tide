@@ -18,11 +18,12 @@ actor YTDLPWorker {
     private var nextID = 1
     private var pending: [Int: CheckedContinuation<[String: Any]?, Never>] = [:]
 
-    func resolve(url: String, format: String, client: String?) async -> Result? {
+    func resolve(url: String, format: String, client: String?, cookies: String?) async -> Result? {
         guard ensureRunning(), let input else { return nil }
         let id = nextID
         nextID += 1
-        let request: [String: Any] = ["id": id, "url": url, "format": format, "client": client ?? NSNull()]
+        let request: [String: Any] = ["id": id, "url": url, "format": format, "client": client ?? NSNull(),
+                                      "cookies": cookies ?? NSNull()]
         guard var line = try? JSONSerialization.data(withJSONObject: request) else { return nil }
         line.append(10)
         Task { [weak self] in
@@ -126,15 +127,17 @@ out_lock = threading.Lock()
 local = threading.local()
 
 
-def downloader(client, fmt):
+def downloader(client, fmt, cookies):
     # One YoutubeDL per (client, format): yt-dlp builds its format selector once,
     # in __init__, so changing params["format"] on a reused instance is ignored.
     cache = getattr(local, "ydls", None)
     if cache is None:
         cache = local.ydls = {}
-    key = (client, fmt)
+    key = (client, fmt, cookies)
     if key not in cache:
         opts = {"quiet": True, "no_warnings": True, "noplaylist": True, "skip_download": True, "format": fmt}
+        if cookies:
+            opts["cookiefile"] = cookies
         if client:
             opts["extractor_args"] = {"youtube": {"player_client": [client]}}
         cache[key] = yt_dlp.YoutubeDL(opts)
@@ -149,7 +152,7 @@ def answer(message):
 
 def handle(request):
     try:
-        ydl = downloader(request.get("client"), request["format"])
+        ydl = downloader(request.get("client"), request["format"], request.get("cookies"))
         info = ydl.extract_info(request["url"], download=False)
         formats = info.get("requested_formats") or [info]
         urls = [f["url"] for f in formats if f.get("url")]

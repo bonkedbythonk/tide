@@ -46,9 +46,37 @@ final class YTClient {
         return true
     }
 
+    /// Your sign-in for yt-dlp, which YouTube needs once it starts asking "are you a
+    /// bot". Written in the Netscape format yt-dlp reads, readable only by you.
+    @MainActor
+    static func writeCookieFile() async -> URL? {
+        let cookies = await WKWebsiteDataStore.default().httpCookieStore.allCookies()
+            .filter { $0.domain.hasSuffix("youtube.com") || $0.domain.hasSuffix("google.com") }
+        guard !cookies.isEmpty else { return nil }
+        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("MusicApp", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let file = dir.appendingPathComponent("cookies.txt")
+        var lines = ["# Netscape HTTP Cookie File"]
+        for c in cookies {
+            let domain = c.domain.hasPrefix(".") ? c.domain : c.domain
+            lines.append([
+                domain, domain.hasPrefix(".") ? "TRUE" : "FALSE", c.path, c.isSecure ? "TRUE" : "FALSE",
+                String(Int(c.expiresDate?.timeIntervalSince1970 ?? 0)), c.name, c.value,
+            ].joined(separator: "\t"))
+        }
+        FileManager.default.createFile(atPath: file.path, contents: Data((lines.joined(separator: "\n") + "\n").utf8),
+                                       attributes: [.posixPermissions: 0o600])
+        return file
+    }
+
     @MainActor
     static func signOut() async {
         let store = WKWebsiteDataStore.default()
+        let cookieFile = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("MusicApp/cookies.txt")
+        try? FileManager.default.removeItem(at: cookieFile)
+        StreamResolver.cookieFile = nil
         let records = await store.dataRecords(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes())
         await store.removeData(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(), for: records)
     }

@@ -76,7 +76,7 @@ actor StreamResolver {
     func phoneAudio(_ videoId: String, low: Bool, ahead: Bool) async throws -> Data {
         if ahead, !backgroundAllowed { throw Failure.ytdlp("Too many requests; try again later") }
         recentRequests.append(.now)
-        let format = low ? "ba[ext=m4a][abr<=64]/ba[ext=m4a]" : "ba[ext=m4a][abr<=160]/ba[ext=m4a]"
+        let format = low ? "ba[ext=m4a][abr<=64]/ba[ext=m4a][abr<=160]/ba[ext=m4a]" : "ba[ext=m4a][abr<=160]/ba[ext=m4a]"
         do {
             var streams = try? await Self.run(videoId, video: false, maxHeight: 0, client: "web_embedded", format: format)
             if streams == nil { streams = try await Self.run(videoId, video: false, maxHeight: 0, client: nil, format: format) }

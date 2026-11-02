@@ -1,5 +1,4 @@
 import AppKit
-import Synchronization
 import Libmpv
 import QuartzCore
 
@@ -107,16 +106,20 @@ final class MpvEngine {
     var isAvailable: Bool { mpv != nil }
 
     /// Plays one track. `video` nil means audio only.
-    func load(audio: URL, video: URL?, start: Double, paused: Bool) {
+    /// `gainDb` lowers loud tracks to YouTube Music's level (0 = as mastered).
+    func load(audio: URL, video: URL?, start: Double, paused: Bool, gainDb: Double) {
         set("vid", video == nil ? "no" : "auto")
         set("pause", paused ? "yes" : "no")
-        pendingAudio.withLock { $0 = (video == nil || video == audio) ? nil : audio.absoluteString }
+        set("volume-gain", String(format: "%.2f", gainDb))
+        // YouTube serves video and audio as separate streams. Registering the audio
+        // before loading makes mpv open both and start them together; adding it
+        // after the video had loaded left the first seconds silent.
+        command(["change-list", "audio-files", "clr", ""])
+        if let video, video != audio {
+            command(["change-list", "audio-files", "append", audio.absoluteString])
+        }
         command(["loadfile", (video ?? audio).absoluteString, "replace", "-1", "start=\(start)"])
     }
-
-    /// YouTube serves video and audio as separate streams; the audio is added
-    /// once the video file has loaded.
-    private let pendingAudio = Mutex<String?>(nil)
 
     func stop() { command(["stop"]) }
     func seek(_ seconds: Double) { command(["seek", String(seconds), "absolute"]) }
@@ -176,10 +179,6 @@ final class MpvEngine {
                     DispatchQueue.main.async { [weak self] in
                         if name == "pause" { self?.onPause?(value) } else { self?.onBuffering?(value) }
                     }
-                }
-            case MPV_EVENT_FILE_LOADED:
-                if let audio = pendingAudio.withLock({ value -> String? in defer { value = nil }; return value }) {
-                    command(["audio-add", audio, "select"])
                 }
             case MPV_EVENT_END_FILE:
                 guard let end = event.data?.assumingMemoryBound(to: mpv_event_end_file.self).pointee else { continue }

@@ -57,6 +57,7 @@ struct MusicSampleApp: App {
 struct RootView: View {
     @Environment(Library.self) private var library
     @Environment(Player.self) private var player
+    @Environment(LyricsStore.self) private var lyrics
     @Environment(Router.self) private var router
     @State private var swipe = SwipeTracker()
 
@@ -120,6 +121,12 @@ struct RootView: View {
             SpaceToPlay.install(player: player)
         }
         .task { await library.start() }
+        // Lyrics load with every song, so Now Playing knows up front whether there are any.
+        .task(id: player.current?.id) {
+            guard let song = player.current else { return }
+            for _ in 0..<15 where player.duration <= 0 { try? await Task.sleep(for: .milliseconds(200)) }
+            await lyrics.load(song, duration: player.duration)
+        }
     }
 }
 

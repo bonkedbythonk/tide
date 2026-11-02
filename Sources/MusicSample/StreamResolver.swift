@@ -11,6 +11,8 @@ actor StreamResolver {
         /// YouTube's links answer 403 until a few seconds after they're issued
         /// (yt-dlp: "Sleeping 6.00 seconds as required by the site").
         let availableAt: Date
+        /// How far YouTube Music turns this track down (dB, 0 or negative).
+        var gainDb: Double = 0
     }
 
     enum Failure: LocalizedError {
@@ -39,13 +41,18 @@ actor StreamResolver {
         if let hit = cache[key], hit.resolvedAt.timeIntervalSinceNow > -4 * 3600 { return hit }
         if let running = inFlight[key] { return try await running.value }
         let task = Task {
+            async let gain = Self.loudnessGain(videoId)
+            var streams: Streams
             // Audio: the embedded-player client's links work immediately, the default
             // client's only after a ~5 s wait. Videos stay on the default client, which
             // has HD; the embedded one stops around 720p.
             if !video, let fast = try? await Self.run(videoId, video: false, maxHeight: maxHeight, client: "web_embedded") {
-                return fast
+                streams = fast
+            } else {
+                streams = try await Self.run(videoId, video: video, maxHeight: maxHeight, client: nil)
             }
-            return try await Self.run(videoId, video: video, maxHeight: maxHeight, client: nil)
+            streams.gainDb = await gain
+            return streams
         }
         inFlight[key] = task
         defer { inFlight[key] = nil }
@@ -58,6 +65,27 @@ actor StreamResolver {
         for id in videoIds {
             Task { _ = try? await resolve(id, video: video, maxHeight: maxHeight) }
         }
+    }
+
+    /// YouTube Music plays loud masters quieter: it measures each track (LKFS) and
+    /// turns it down to a target of -14, never up. The iOS client's player response
+    /// carries both numbers. Any failure means 0, i.e. play as mastered.
+    private static func loudnessGain(_ videoId: String) async -> Double {
+        var request = URLRequest(url: URL(string: "https://music.youtube.com/youtubei/v1/player?prettyPrint=false")!)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let body: [String: Any] = [
+            "videoId": videoId,
+            "context": ["client": ["clientName": "IOS", "clientVersion": "20.10.4", "hl": "en"]],
+        ]
+        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        guard let (data, _) = try? await URLSession.shared.data(for: request),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let audio = (json["playerConfig"] as? [String: Any])?["audioConfig"] as? [String: Any],
+              let track = (audio["trackAbsoluteLoudnessLkfs"] ?? audio["perceptualLoudnessDb"]) as? Double
+        else { return 0 }
+        let target = audio["loudnessTargetLkfs"] as? Double ?? -14
+        return min(0, target - track)
     }
 
     private static func run(_ videoId: String, video: Bool, maxHeight: Int, client: String?) async throws -> Streams {

@@ -231,14 +231,14 @@ struct SoundPopover: View {
                 }
             }
             Toggle("Gapless playback", isOn: $player.gapless)
-            Toggle("Normalize loudness", isOn: $player.normalize)
+            Toggle("Match YouTube Music loudness", isOn: $player.matchLoudness)
             Picker("Equalizer", selection: $player.eq) {
                 ForEach(EQPreset.allCases) { Text($0.rawValue).tag($0) }
             }
             Picker("Sleep timer", selection: $player.sleepTimer) {
                 ForEach(SleepTimer.allCases) { Text($0.rawValue).tag($0) }
             }
-            Text("Normalize works. Crossfade, gapless, EQ and sleep timer aren't wired up yet.")
+            Text("Loudness matching works. Crossfade, gapless, EQ and sleep timer aren't wired up yet.")
                 .font(.caption).foregroundStyle(.secondary)
         }
         .formStyle(.grouped)
@@ -398,7 +398,20 @@ struct LyricsView: View {
 struct NowPlayingView: View {
     @Environment(Player.self) private var player
     @Environment(Router.self) private var router
+    @Environment(LyricsStore.self) private var lyrics
     @State private var appeared = false
+    /// Set when Now Playing moved to Up Next because a song had no lyrics, so it
+    /// can move back for the next song that has them.
+    @State private var leftLyricsForMissing = false
+
+    /// nil while still loading.
+    private var hasLyrics: Bool? {
+        guard let id = player.current?.id, let result = lyrics.result(for: id) else { return nil }
+        switch result {
+        case .synced, .plain: return true
+        case .instrumental, .none: return false
+        }
+    }
 
     var body: some View {
         @Bindable var router = router
@@ -457,6 +470,7 @@ struct NowPlayingView: View {
                         .font(.title2)
                     }
                     .frame(width: player.videoMode ? 520 : 380)
+                    .frame(maxHeight: .infinity)
                     .animation(.snappy(duration: 0.35), value: s.id)
                     .animation(.snappy(duration: 0.35), value: player.videoMode)
 
@@ -494,6 +508,18 @@ struct NowPlayingView: View {
         }
         .onAppear {
             withAnimation(.spring(duration: 0.55, bounce: 0.2).delay(0.05)) { appeared = true }
+        }
+        .onChange(of: hasLyrics, initial: true) { _, has in
+            guard let has else { return }
+            withAnimation(.snappy) {
+                if !has, router.panelTab == .lyrics {
+                    router.panelTab = .queue
+                    leftLyricsForMissing = true
+                } else if has, leftLyricsForMissing {
+                    router.panelTab = .lyrics
+                    leftLyricsForMissing = false
+                }
+            }
         }
     }
 }

@@ -8,7 +8,7 @@ enum Prefs {
     private static let d = UserDefaults.standard
     static func double(_ key: String, _ fallback: Double) -> Double { d.object(forKey: key) as? Double ?? fallback }
     static func int(_ key: String, _ fallback: Int) -> Int { d.object(forKey: key) as? Int ?? fallback }
-    static func bool(_ key: String) -> Bool { d.bool(forKey: key) }
+    static func bool(_ key: String, _ fallback: Bool = false) -> Bool { d.object(forKey: key) as? Bool ?? fallback }
     static func string(_ key: String) -> String? { d.string(forKey: key) }
     static func set(_ value: Any, _ key: String) { d.set(value, forKey: key) }
 }
@@ -43,7 +43,13 @@ enum SleepTimer: String, CaseIterable, Identifiable {
     var crossfade = 0.0
     var gapless = true
     var eq = EQPreset.flat
-    var normalize = Prefs.bool("normalize") { didSet { applyFilters(); Prefs.set(normalize, "normalize") } }
+    /// Turn loud tracks down the way YouTube Music does (on by default).
+    var matchLoudness = Prefs.bool("matchLoudness", true) {
+        didSet {
+            Prefs.set(matchLoudness, "matchLoudness")
+            engine.set("volume-gain", String(format: "%.2f", matchLoudness ? currentGain : 0))
+        }
+    }
     var sleepTimer = SleepTimer.off
     var device = "This Mac"
     var skipForward = true
@@ -70,6 +76,7 @@ enum SleepTimer: String, CaseIterable, Identifiable {
     @ObservationIgnored private var nowPlaying: NowPlayingCenter?
     @ObservationIgnored private var loadToken = 0
     @ObservationIgnored private var settingVideoForNewQueue = false
+    @ObservationIgnored private var currentGain = 0.0
 
     var current: Song? { queue.indices.contains(index) ? queue[index] : nil }
     var upNext: [Song] { queue.indices.contains(index) ? Array(queue[(index + 1)...]) : [] }
@@ -96,7 +103,6 @@ enum SleepTimer: String, CaseIterable, Identifiable {
             self?.isPlaying = false
         }
         applyVolume()
-        applyFilters()
         nowPlaying = NowPlayingCenter(player: self)
     }
 
@@ -124,7 +130,9 @@ enum SleepTimer: String, CaseIterable, Identifiable {
                 let wait = streams.availableAt.timeIntervalSinceNow
                 if wait > 0 { try await Task.sleep(for: .seconds(wait + 0.2)) }
                 guard token == self.loadToken else { return }
-                self.engine.load(audio: streams.audio, video: streams.video, start: start, paused: !autoplay)
+                self.currentGain = streams.gainDb
+                self.engine.load(audio: streams.audio, video: streams.video, start: start, paused: !autoplay,
+                                 gainDb: self.matchLoudness ? streams.gainDb : 0)
                 self.isLoading = false
                 await self.resolver.prefetch(self.upNext.prefix(2).map(\.id), video: video, maxHeight: height)
             } catch {
@@ -253,8 +261,6 @@ enum SleepTimer: String, CaseIterable, Identifiable {
 
     /// Squared, so the slider's lower half isn't all "loud" (Pear's exponential-volume).
     private func applyVolume() { engine.set("volume", String(format: "%.1f", volume * volume * 100)) }
-
-    private func applyFilters() { engine.set("af", normalize ? "lavfi=[loudnorm=I=-14:TP=-1.5:LRA=11]" : "") }
 
     private func publishNowPlaying() { nowPlaying?.update(song: current, position: position, duration: length, playing: isPlaying) }
 }

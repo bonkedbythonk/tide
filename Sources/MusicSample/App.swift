@@ -22,7 +22,7 @@ struct MusicSampleApp: App {
     }
 
     var body: some Scene {
-        WindowGroup("Music Sample") {
+        WindowGroup("Tide") {
             RootView()
                 .environment(library)
                 .environment(player)

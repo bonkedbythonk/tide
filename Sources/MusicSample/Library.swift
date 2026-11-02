@@ -1,0 +1,176 @@
+import SwiftUI
+
+/// The signed-in user's YouTube Music data. Reads are live; likes and playlist
+/// additions are kept locally for now and not sent to YouTube.
+@Observable final class Library {
+    enum State: Equatable { case starting, signedOut, loading, ready, failed(String) }
+
+    var state = State.starting
+    var home: [HomeShelf] = []
+    var playlists: [MediaItem] = []
+    var savedAlbums: [MediaItem] = []
+    var pages: [String: PageData] = [:]
+    var liked: Set<String> = []
+    var localAdds: [String: [Song]] = [:]
+    var lastUsedPlaylistID: String?
+    var toast: String?
+
+    @ObservationIgnored let client = YTClient()
+    @ObservationIgnored private var songIndex: [String: Song] = [:]
+    @ObservationIgnored private var homeContinuation: String?
+    @ObservationIgnored private var loadingHome = false
+    @ObservationIgnored private var loadingPages: Set<String> = []
+    @ObservationIgnored private var toastToken = 0
+
+    static let likedID = "VLLM"
+
+    @MainActor
+    func start() async {
+        state = await client.loadCookies() ? .loading : .signedOut
+        if state == .loading { await refresh() }
+    }
+
+    @MainActor
+    func refresh() async {
+        if home.isEmpty { state = .loading }
+        do {
+            async let homeJSON = client.browse("FEmusic_home")
+            async let playlistJSON = client.browse("FEmusic_liked_playlists")
+            async let albumJSON = client.browse("FEmusic_liked_albums")
+            let h = try await homeJSON
+            home = YTParse.shelves(h)
+            homeContinuation = YTParse.continuation(h)
+            playlists = YTParse.cards(try await playlistJSON)
+                .filter { $0.id.hasPrefix("VL") && $0.id != Self.likedID && $0.id != "VLSE" }
+            savedAlbums = YTParse.cards(try await albumJSON).filter { $0.kind == .album }
+            home.forEach { $0.songs.forEach(remember) }
+            state = .ready
+            await loadMoreHome(pages: 3)
+            if let likedPage = await page(Self.likedID) { liked = Set(likedPage.songs.map(\.id)) }
+        } catch {
+            state = .failed(error.localizedDescription)
+        }
+    }
+
+    /// YouTube sends Home a few sections at a time.
+    @MainActor
+    func loadMoreHome(pages: Int) async {
+        guard !loadingHome else { return }
+        loadingHome = true
+        defer { loadingHome = false }
+        for _ in 0..<pages {
+            guard let token = homeContinuation,
+                  let json = try? await client.more(token, homeStyle: true) else { return }
+            let more = YTParse.shelves(json).filter { s in !home.contains { $0.title == s.title } }
+            more.forEach { $0.songs.forEach(remember) }
+            home += more
+            homeContinuation = YTParse.continuation(json)
+        }
+    }
+
+    /// A playlist, album, mix or artist page, with every song (up to 2,000).
+    @MainActor
+    func page(_ id: String) async -> PageData? {
+        if let cached = pages[id] { return cached }
+        guard !loadingPages.contains(id) else { return nil }
+        loadingPages.insert(id)
+        defer { loadingPages.remove(id) }
+        do {
+            let json = try await client.browse(id)
+            var data = YTParse.page(json, id: id)
+            pages[id] = data
+            var token = YTParse.continuation(json)
+            while let t = token, data.songs.count < 2000 {
+                let next = try await client.more(t)
+                let more = YTParse.songs(next)
+                guard !more.isEmpty else { break }
+                data.songs += more
+                pages[id] = data
+                token = YTParse.continuation(next)
+            }
+            data.songs.forEach(remember)
+            return data
+        } catch {
+            showToast("Couldn't load: \(error.localizedDescription)")
+            return nil
+        }
+    }
+
+    func songs(in pageID: String) -> [Song] {
+        (pages[pageID]?.songs ?? []) + (localAdds[pageID] ?? [])
+    }
+
+    @MainActor
+    func search(_ query: String) async -> (songs: [Song], items: [MediaItem]) {
+        guard let json = try? await client.search(query) else { return ([], []) }
+        let result = YTParse.search(json)
+        result.songs.forEach(remember)
+        return result
+    }
+
+    @MainActor
+    func signOut() async {
+        await YTClient.signOut()
+        home = []
+        playlists = []
+        savedAlbums = []
+        pages = [:]
+        liked = []
+        state = .signedOut
+    }
+
+    private func remember(_ s: Song) { songIndex[s.id] = s }
+    func song(_ id: String) -> Song? { songIndex[id] }
+    func songs(_ ids: [String]) -> [Song] { ids.compactMap { songIndex[$0] } }
+    func playlist(_ id: String) -> MediaItem? { playlists.first { $0.id == id } }
+
+    func isLiked(_ id: String) -> Bool { liked.contains(id) }
+
+    func toggleLike(_ id: String) {
+        if liked.remove(id) != nil {
+            showToast("Removed from Liked Songs (this Mac only for now)")
+        } else {
+            liked.insert(id)
+            showToast("Liked (this Mac only for now)")
+        }
+    }
+
+    func like(_ ids: [String]) {
+        liked.formUnion(ids)
+        showToast(ids.count == 1 ? "Liked (this Mac only for now)" : "Liked \(ids.count) songs (this Mac only for now)")
+    }
+
+    func contains(_ ids: [String], in playlistID: String) -> Bool {
+        let present = Set(songs(in: playlistID).map(\.id))
+        return ids.allSatisfy(present.contains)
+    }
+
+    func add(_ ids: [String], to playlistID: String) {
+        let present = Set(songs(in: playlistID).map(\.id))
+        let new = songs(ids).filter { !present.contains($0.id) }
+        localAdds[playlistID, default: []] += new
+        lastUsedPlaylistID = playlistID
+        let name = playlist(playlistID)?.title ?? "playlist"
+        if new.isEmpty {
+            showToast("Already in \(name)")
+        } else {
+            showToast((new.count == 1 ? "Added to \(name)" : "Added \(new.count) songs to \(name)") + " (this Mac only for now)")
+        }
+    }
+
+    func remove(_ ids: [String], from playlistID: String) {
+        localAdds[playlistID]?.removeAll { ids.contains($0.id) }
+        pages[playlistID]?.songs.removeAll { ids.contains($0.id) }
+        showToast("Removed (this Mac only for now)")
+    }
+
+    func showToast(_ text: String) {
+        toastToken += 1
+        let token = toastToken
+        withAnimation(.snappy) { toast = text }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.2) { [weak self] in
+            guard let self, self.toastToken == token else { return }
+            withAnimation(.snappy) { self.toast = nil }
+        }
+    }
+}

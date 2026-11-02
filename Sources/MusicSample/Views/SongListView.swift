@@ -35,7 +35,8 @@ struct SongRowItem: Identifiable {
     var duration: TimeInterval { song.duration }
 }
 
-/// Sortable columns, Cmd-F filter, multi-select and drag.
+/// Clean list: two lines per song, no lines between rows, hover controls.
+/// Sort menu, Cmd-F filter, Cmd/Shift-click multi-select and drag.
 struct SongListView: View {
     @Environment(Library.self) private var library
     @Environment(Player.self) private var player
@@ -49,6 +50,7 @@ struct SongListView: View {
     @State private var filter = ""
     @State private var filterFocused = false
     @State private var appeared = false
+    @State private var anchor: String?
 
     private var items: [SongRowItem] {
         var seen = Set<String>()
@@ -75,102 +77,38 @@ struct SongListView: View {
         let suggestions = suggestionItems
         let visibleSongs = rows.map(\.song)
         let suggestedSongs = suggestions.map(\.song)
-        let allRows = rows + suggestions
-        let currentID = player.current?.id
-        VStack(spacing: 0) {
-            header(visibleSongs)
-            Table(of: SongRowItem.self, selection: $selection, sortOrder: $sortOrder) {
-                TableColumn("#", value: \.number) { item in
-                    if currentID == item.id {
-                        Image(systemName: "waveform")
-                            .foregroundStyle(Color.accentColor)
-                            .symbolEffect(.variableColor.iterative.dimInactiveLayers, isActive: player.isPlaying)
-                    } else if item.isSuggestion {
-                        Image(systemName: "sparkles").foregroundStyle(.secondary)
-                    } else {
-                        Text("\(item.number)").foregroundStyle(.secondary).monospacedDigit()
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                header(visibleSongs)
+                LazyVStack(spacing: 2) {
+                    ForEach(rows) { item in
+                        row(item, in: rows, playlist: visibleSongs, suggested: suggestedSongs)
                     }
-                }
-                .width(38)
-                TableColumn("Title", value: \.title) { item in
-                    HStack(spacing: 8) {
-                        Artwork(hue: item.song.hue, url: item.song.artwork, side: 28, radius: 4, symbol: nil)
-                        Text(item.title)
-                            .foregroundStyle(currentID == item.id ? Color.accentColor : item.isSuggestion ? Color.secondary : Color.primary)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .contentShape(Rectangle())
-                    .modifier(OnDwell { player.prefetch(item.song) })
-                }
-                .width(min: 180, ideal: 300)
-                TableColumn("Artist", value: \.artist)
-                TableColumn("Album", value: \.album)
-                TableColumn("") { item in
-                    if item.isSuggestion, let playlistID {
-                        // One click puts a suggestion into this playlist; no playlist picker.
-                        Button {
-                            withAnimation(.snappy) { library.add([item.id], to: playlistID) }
-                        } label: {
-                            Label("Add", systemImage: "plus")
-                                .font(.callout.weight(.semibold))
-                        }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
-                        .help("Add to this playlist")
-                    } else {
-                        HStack(spacing: 10) {
-                            LikeButton(songID: item.id)
-                            StandaloneAddButton(songIDs: [item.id])
-                        }
-                    }
-                }
-                .width(64)
-                TableColumn("Time", value: \.duration) { item in
-                    Text(item.duration > 0 ? formatTime(item.duration) : "")
-                        .foregroundStyle(.secondary).monospacedDigit()
-                }
-                .width(50)
-            } rows: {
-                ForEach(rows) { item in
-                    TableRow(item)
-                        .draggable(SongDrag.payload(dragIDs(for: item, in: rows)))
-                }
-                if !suggestions.isEmpty {
-                    Section {
+                    if !suggestions.isEmpty {
+                        Text("Suggestions")
+                            .font(.title3.bold())
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 8)
+                            .padding(.top, 22)
+                            .padding(.bottom, 6)
                         ForEach(suggestions) { item in
-                            TableRow(item).draggable(SongDrag.payload([item.id]))
+                            row(item, in: suggestions, playlist: visibleSongs, suggested: suggestedSongs)
                         }
-                    } header: {
-                        Text("Suggestions").font(.headline)
                     }
                 }
-            }
-            .contextMenu(forSelectionType: String.self) { ids in
-                SongMenu(songs: library.songs(orderedIDs(ids, in: allRows)), playlistID: playlistID)
-            } primaryAction: { ids in
-                if let id = ids.first, let s = library.song(id) { play(s, visibleSongs, suggestedSongs) }
-            }
-            .onChange(of: selection) { _, new in
-                guard new.count == 1, let id = new.first, let s = library.song(id),
-                      NSEvent.modifierFlags.isDisjoint(with: [.command, .shift]) else { return }
-                ClickToPlay.arm { play(s, visibleSongs, suggestedSongs) }
-            }
-            .scrollContentBackground(.hidden)
-            .alternatingRowBackgrounds(.disabled)
-            // AppKit's column header is an opaque black bar over a wallpaper; sorting
-            // moves to the Sort menu in the page header instead.
-            .tableColumnHeaders(wallpaper.isActive ? .hidden : .visible)
-            // Over a wallpaper the list sits on one edge-to-edge material panel: never
-            // text straight on a picture, and no strips of wallpaper at the sides.
-            .background {
-                if wallpaper.isActive {
-                    UnevenRoundedRectangle(topLeadingRadius: 16, topTrailingRadius: 16, style: .continuous)
-                        .fill(.regularMaterial)
-                        .ignoresSafeArea(edges: .bottom)
+                .padding(10)
+                // Over a wallpaper the list sits on one material panel: never text
+                // straight on a picture.
+                .background {
+                    if wallpaper.isActive {
+                        RoundedRectangle(cornerRadius: 16, style: .continuous).fill(.regularMaterial)
+                    }
                 }
+                .padding(.horizontal, 14)
+                .padding(.bottom, 20)
+                .opacity(appeared ? 1 : 0)
+                .offset(y: appeared ? 0 : 28)
             }
-            .opacity(appeared ? 1 : 0)
-            .offset(y: appeared ? 0 : 28)
         }
         .onAppear {
             withAnimation(.spring(duration: 0.5, bounce: 0.18)) { appeared = true }
@@ -182,6 +120,34 @@ struct SongListView: View {
             Button("") { filterFocused = true }
                 .keyboardShortcut("f", modifiers: .command)
                 .opacity(0)
+        }
+    }
+
+    private func row(_ item: SongRowItem, in list: [SongRowItem], playlist: [Song], suggested: [Song]) -> some View {
+        let dragged = selection.contains(item.id) && selection.count > 1 ? orderedIDs(selection, in: list) : [item.id]
+        return SongRow(item: item, selected: selection.contains(item.id),
+                       addTo: item.isSuggestion ? playlistID : nil) {
+            click(item, in: list, playlist: playlist, suggested: suggested)
+        }
+        .draggable(SongDrag.payload(dragged)) { DragPreview(songs: library.songs(dragged)) }
+        .contextMenu {
+            SongMenu(songs: library.songs(dragged), playlistID: item.isSuggestion ? nil : playlistID)
+        }
+    }
+
+    /// Plain click plays; Cmd-click adds to the selection, Shift-click selects a range.
+    private func click(_ item: SongRowItem, in list: [SongRowItem], playlist: [Song], suggested: [Song]) {
+        let mods = NSEvent.modifierFlags
+        if mods.contains(.command) {
+            if selection.remove(item.id) == nil { selection.insert(item.id) }
+            anchor = item.id
+        } else if mods.contains(.shift), let anchor, let from = list.firstIndex(where: { $0.id == anchor }),
+                  let to = list.firstIndex(where: { $0.id == item.id }) {
+            selection = Set(list[min(from, to)...max(from, to)].map(\.id))
+        } else {
+            selection = [item.id]
+            anchor = item.id
+            play(item.song, playlist, suggested)
         }
     }
 
@@ -207,7 +173,7 @@ struct SongListView: View {
                         Label("Shuffle", systemImage: "shuffle")
                     }
                     .buttonStyle(PillButtonStyle(prominent: false))
-                    if wallpaper.isActive {
+                    do {
                         Menu {
                             Picker("Sort by", selection: $sortOrder) {
                                 Text("Playlist order").tag([KeyPathComparator(\SongRowItem.number)])
@@ -242,12 +208,6 @@ struct SongListView: View {
     /// A suggestion plays among the suggestions, a playlist song among the playlist.
     private func play(_ song: Song, _ playlist: [Song], _ suggested: [Song]) {
         player.play(song, in: playlist.contains(song) ? playlist : suggested)
-    }
-
-    /// Dragging a selected row drags the whole selection, in the order shown.
-    private func dragIDs(for item: SongRowItem, in rows: [SongRowItem]) -> [String] {
-        guard selection.contains(item.id), selection.count > 1 else { return [item.id] }
-        return orderedIDs(selection, in: rows)
     }
 
     private func orderedIDs(_ ids: Set<String>, in rows: [SongRowItem]) -> [String] {
@@ -340,5 +300,89 @@ struct PillButtonStyle: ButtonStyle {
             }
             .scaleEffect(configuration.isPressed ? 0.96 : 1)
             .animation(.snappy(duration: 0.15), value: configuration.isPressed)
+    }
+}
+
+/// One song in a playlist: number (or a waveform while playing), cover, title over
+/// artist, album and length. Like and + show on hover or when liked.
+struct SongRow: View {
+    @Environment(Library.self) private var library
+    @Environment(Player.self) private var player
+    let item: SongRowItem
+    let selected: Bool
+    /// Set for a suggestion: one click adds it to this playlist.
+    let addTo: String?
+    let tap: () -> Void
+    @State private var hovering = false
+    @State private var pickerOpen = false
+
+    var body: some View {
+        let playing = player.current?.id == item.id
+        HStack(spacing: 12) {
+            Group {
+                if playing {
+                    Image(systemName: "waveform")
+                        .foregroundStyle(Color.accentColor)
+                        .symbolEffect(.variableColor.iterative.dimInactiveLayers, isActive: player.isPlaying)
+                } else if item.isSuggestion {
+                    Image(systemName: "sparkles").foregroundStyle(.secondary)
+                } else {
+                    Text("\(item.number)").foregroundStyle(.secondary).monospacedDigit()
+                }
+            }
+            .font(.callout)
+            .frame(width: 26)
+            Artwork(hue: item.song.hue, url: item.song.artwork, side: 40, radius: 6, symbol: nil)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(item.title)
+                    .font(.system(size: 13.5, weight: .medium))
+                    .foregroundStyle(playing ? Color.accentColor : item.isSuggestion ? Color.secondary : Color.primary)
+                    .lineLimit(1)
+                Text(item.artist).font(.callout).foregroundStyle(.secondary).lineLimit(1)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            if let addTo {
+                Button {
+                    withAnimation(.snappy) { library.add([item.id], to: addTo) }
+                } label: {
+                    Label("Add", systemImage: "plus")
+                }
+                .buttonStyle(PillButtonStyle(prominent: false))
+                .controlSize(.small)
+                .help("Add to this playlist")
+            } else {
+                // Fixed slots so a liked heart doesn't shift when + appears on hover.
+                HStack(spacing: 12) {
+                    LikeButton(songID: item.id)
+                        .opacity(hovering || pickerOpen || library.isLiked(item.id) ? 1 : 0)
+                    AddToPlaylistButton(songIDs: [item.id], open: $pickerOpen)
+                        .opacity(hovering || pickerOpen ? 1 : 0)
+                }
+                .frame(width: 48)
+            }
+            Text(item.album)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .frame(width: 210, alignment: .leading)
+            Text(item.duration > 0 ? formatTime(item.duration) : "")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
+                .frame(width: 44, alignment: .trailing)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background {
+            RoundedRectangle(cornerRadius: 8, style: .continuous).fill(
+                selected ? Color.accentColor.opacity(0.28)
+                    : playing ? Color.accentColor.opacity(0.12)
+                    : hovering ? Color.primary.opacity(0.07) : .clear
+            )
+        }
+        .contentShape(Rectangle())
+        .stableHover { hovering = $0 }
+        .modifier(OnDwell { player.prefetch(item.song) })
+        .onTapGesture(perform: tap)
     }
 }

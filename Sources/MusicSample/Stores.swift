@@ -462,6 +462,8 @@ enum SleepTimer: String, CaseIterable, Identifiable {
 
     var videoFullscreen = false
     var showShortcuts = false
+    /// Bumped by / and ⌘K so the search field takes focus even when Search is already open.
+    var searchFocusRequest = 0
     /// The floating video in the corner was closed for the current video session.
     var miniPlayerHidden = false
 
@@ -492,6 +494,11 @@ enum SleepTimer: String, CaseIterable, Identifiable {
         backStack.append(current)
         forwardStack.removeAll()
         current = route
+    }
+
+    func openSearch() {
+        go(.search)
+        searchFocusRequest += 1
     }
 
     func goBack() {
@@ -623,7 +630,7 @@ enum KeyboardShortcuts {
         case "n": if player.current != nil { withAnimation(.spring(duration: 0.45, bounce: 0.12)) { router.showNowPlaying.toggle() } }
         case "l": router.togglePanel(.lyrics)
         case "q": router.togglePanel(.queue)
-        case "/": router.go(.search)
+        case "/": router.openSearch()
         default: return false
         }
         return true

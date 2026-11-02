@@ -16,6 +16,7 @@ struct HomeView: View {
                     Button { customizing = true } label: {
                         Label("Customize", systemImage: "slider.horizontal.3")
                     }
+                    .buttonStyle(PillButtonStyle(prominent: false))
                     .help("Reorder or hide Home sections")
                 }
                 .padding(.horizontal, 24)
@@ -33,7 +34,8 @@ struct HomeView: View {
                     .frame(height: 1)
                     .onAppear { Task { await library.loadMoreHome(pages: 2) } }
             }
-            .padding(.vertical, 20)
+            .padding(.top, 50)
+            .padding(.bottom, 20)
         }
         .sheet(isPresented: $customizing) { CustomizeHomeSheet() }
         .onChange(of: library.home.count, initial: true) { home.learn(library.home) }
@@ -113,7 +115,7 @@ struct SectionHeader: View {
                 Button { player.playAll(shelf.songs, video: shelf.isVideos) } label: {
                     Label("Play all", systemImage: "play.fill")
                 }
-                .controlSize(.small)
+                .buttonStyle(PillButtonStyle(prominent: false))
             }
             Menu {
                 Button("Hide This Section") { withAnimation { _ = home.hidden.insert(shelf.title) } }
@@ -150,7 +152,7 @@ struct ContinueBanner: View {
                     player.resume(song, at: 102)
                     withAnimation { home.showContinueBanner = false }
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(PillButtonStyle(prominent: true))
                 Button { withAnimation { home.showContinueBanner = false } } label: {
                     Image(systemName: "xmark")
                 }

@@ -34,6 +34,9 @@ struct MusicSampleApp: App {
                 .onAppear { NSApp.activate(ignoringOtherApps: true) }
         }
         .defaultSize(width: 1280, height: 820)
+        // No top bar, like anicat: content runs to the top edge and the window
+        // buttons sit over the sidebar.
+        .windowStyle(.hiddenTitleBar)
         Settings {
             SettingsView().environment(wallpaper)
         }
@@ -66,7 +69,7 @@ struct MusicSampleApp: App {
                         .keyboardShortcut(KeyEquivalent(Character(String(i + 1))), modifiers: .command)
                 }
                 Divider()
-                Button("Search…") { router.go(.search) }.keyboardShortcut("k", modifiers: .command)
+                Button("Search…") { router.openSearch() }.keyboardShortcut("k", modifiers: .command)
                 Button("Keyboard Shortcuts") { router.showShortcuts.toggle() }
             }
         }
@@ -102,14 +105,17 @@ struct RootView: View {
             SidePanelView()
                 .inspectorColumnWidth(min: 260, ideal: 310, max: 420)
         }
-        .toolbar {
-            ToolbarItemGroup(placement: .navigation) {
-                Button { router.goBack() } label: { Image(systemName: "chevron.left") }
-                    .disabled(router.backStack.isEmpty && !router.showNowPlaying)
-                    .help("Back (swipe right with two fingers)")
-                Button { router.goForward() } label: { Image(systemName: "chevron.right") }
-                    .disabled(router.forwardStack.isEmpty)
-                    .help("Forward")
+        .overlay(alignment: .topLeading) {
+            if !router.showNowPlaying {
+                HStack(spacing: 6) {
+                    NavCircleButton(symbol: "chevron.left", enabled: !router.backStack.isEmpty) { router.goBack() }
+                        .help("Back (swipe right with two fingers)")
+                    NavCircleButton(symbol: "chevron.right", enabled: !router.forwardStack.isEmpty) { router.goForward() }
+                        .help("Forward")
+                }
+                .padding(.leading, 14)
+                .padding(.top, 10)
+                .environment(\.colorScheme, wallpaper.isActive ? .dark : colorScheme)
             }
         }
     }
@@ -147,7 +153,6 @@ struct RootView: View {
                     }
                 }
             }
-            .toolbar(router.videoFullscreen ? .hidden : .automatic, for: .windowToolbar)
             if !wallpaper.isActive { Divider() }
             PlayerBar()
         }
@@ -159,13 +164,6 @@ struct RootView: View {
             .ignoresSafeArea()
         }
         .onPreferenceChange(CanvasSizeKey.self) { canvasSize = $0 }
-        // Over a wallpaper the top bar keeps its blurred background (so scrolled content
-        // doesn't run into the title) but loses the line under it.
-        .onChange(of: wallpaper.isActive, initial: true) { _, on in
-            DispatchQueue.main.async {
-                for window in NSApp.windows { window.titlebarSeparatorStyle = on ? .none : .automatic }
-            }
-        }
         .environment(\.wallpaperCanvas, canvasSize)
         .overlay(alignment: .bottomTrailing) {
             if player.videoMode, player.current != nil, !router.showNowPlaying, !router.videoFullscreen,
@@ -296,3 +294,24 @@ private struct CanvasSizeKey: PreferenceKey {
 }
 
 
+
+/// The floating back/forward buttons that replace the top bar.
+struct NavCircleButton: View {
+    let symbol: String
+    let enabled: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 12, weight: .semibold))
+                .frame(width: 28, height: 28)
+                .background(.ultraThinMaterial, in: Circle())
+                .overlay(Circle().strokeBorder(.white.opacity(0.12)))
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .opacity(enabled ? 1 : 0.4)
+        .disabled(!enabled)
+    }
+}

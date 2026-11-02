@@ -12,8 +12,7 @@ struct SignedOutView: View {
             Text("Your Home, playlists, liked songs and albums load from your account.")
                 .foregroundStyle(.secondary)
             Button("Sign In with Google") { signingIn = true }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.large)
+                .buttonStyle(PillButtonStyle(prominent: true))
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .sheet(isPresented: $signingIn) {

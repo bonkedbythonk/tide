@@ -48,7 +48,7 @@ struct SongListView: View {
     @State private var selection = Set<String>()
     @State private var sortOrder = [KeyPathComparator(\SongRowItem.number)]
     @State private var filter = ""
-    @State private var filterFocused = false
+    @FocusState private var filterFocused: Bool
     @State private var appeared = false
     @State private var anchor: String?
 
@@ -112,7 +112,6 @@ struct SongListView: View {
         }
         // Resolve the first songs now, so Play starts without waiting on yt-dlp.
         .task(id: page.id) { songs.prefix(2).forEach { player.prefetch($0) } }
-        .searchable(text: $filter, isPresented: $filterFocused, placement: .toolbar, prompt: "Filter songs")
         .background {
             Button("") { filterFocused = true }
                 .keyboardShortcut("f", modifiers: .command)
@@ -187,6 +186,24 @@ struct SongListView: View {
                         .buttonStyle(PillButtonStyle(prominent: false))
                         .fixedSize()
                     }
+                    // The filter lives in the page now that there's no top bar (Cmd-F).
+                    HStack(spacing: 6) {
+                        Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                        TextField("Filter", text: $filter)
+                            .textFieldStyle(.plain)
+                            .focused($filterFocused)
+                            .frame(width: 140)
+                        if !filter.isEmpty {
+                            Button { filter = "" } label: { Image(systemName: "xmark.circle.fill") }
+                                .buttonStyle(.plain)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .font(.callout)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 7)
+                    .background(.ultraThinMaterial, in: Capsule())
+                    .overlay(Capsule().strokeBorder(.white.opacity(0.15)))
                     if selection.count > 1 {
                         Text("\(selection.count) selected — drag them onto a playlist in the sidebar")
                             .font(.callout).foregroundStyle(.secondary)
@@ -200,6 +217,7 @@ struct SongListView: View {
             Spacer()
         }
         .padding(24)
+        .padding(.top, 30)  // room for the floating back/forward buttons
     }
 
     /// A suggestion plays among the suggestions, a playlist song among the playlist.
@@ -227,6 +245,7 @@ struct SavedAlbumsView: View {
 
 struct SearchView: View {
     @Environment(Library.self) private var library
+    @Environment(Router.self) private var router
     @State private var query = ""
     @State private var songs: [Song] = []
     @State private var items: [MediaItem] = []
@@ -257,9 +276,15 @@ struct SearchView: View {
                     Shelf { ForEach(items) { MediaItemCard(item: $0) } }
                 }
             }
-            .padding(.vertical, 20)
+            .padding(.top, 50)
+            .padding(.bottom, 20)
         }
-        .onAppear { focused = true }
+        // On appear and on every / or ⌘K. The short wait lets the field join the
+        // window first; focusing it before that does nothing.
+        .task(id: router.searchFocusRequest) {
+            try? await Task.sleep(for: .milliseconds(30))
+            focused = true
+        }
         .task(id: query) {
             let q = query.trimmingCharacters(in: .whitespaces)
             guard !q.isEmpty else { songs = []; items = []; searching = false; return }
@@ -319,7 +344,7 @@ struct SongRow: View {
             Group {
                 if playing {
                     Image(systemName: "waveform")
-                        .foregroundStyle(Color.accentColor)
+                        .foregroundStyle(.primary)
                         .symbolEffect(.variableColor.iterative.dimInactiveLayers, isActive: player.isPlaying)
                 } else if item.isSuggestion {
                     Image(systemName: "sparkles").foregroundStyle(.secondary)
@@ -332,8 +357,8 @@ struct SongRow: View {
             Artwork(hue: item.song.hue, url: item.song.artwork, side: 40, radius: 6, symbol: nil)
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.title)
-                    .font(.system(size: 13.5, weight: .medium))
-                    .foregroundStyle(playing ? Color.accentColor : item.isSuggestion ? Color.secondary : Color.primary)
+                    .font(.system(size: 13.5, weight: playing ? .bold : .medium))
+                    .foregroundStyle(item.isSuggestion && !playing ? Color.secondary : Color.primary)
                     .lineLimit(1)
                 Text(item.artist).font(.callout).foregroundStyle(.secondary).lineLimit(1)
             }
@@ -379,10 +404,11 @@ struct SongRow: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
         .background {
+            // Neutral washes, not the system blue, which clashed on the dark panel.
             RoundedRectangle(cornerRadius: 8, style: .continuous).fill(
-                selected ? Color.accentColor.opacity(0.28)
-                    : playing ? Color.accentColor.opacity(0.12)
-                    : hovering ? Color.primary.opacity(0.07) : .clear
+                selected ? Color.primary.opacity(0.16)
+                    : playing ? Color.primary.opacity(0.10)
+                    : hovering ? Color.primary.opacity(0.06) : .clear
             )
         }
         .contentShape(Rectangle())

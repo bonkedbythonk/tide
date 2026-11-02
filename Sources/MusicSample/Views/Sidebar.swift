@@ -36,6 +36,8 @@ struct SidebarView: View {
             }
         }
         .listStyle(.sidebar)
+        // Clear of the window buttons, now that there's no title bar.
+        .safeAreaPadding(.top, 30)
         .safeAreaInset(edge: .bottom) {
             if library.state == .ready {
                 HStack {

@@ -97,11 +97,12 @@ struct SongListView: View {
                     }
                 }
                 .padding(10)
-                // Over a wallpaper the list sits on one material panel: never text
-                // straight on a picture.
+                // Over a wallpaper the list sits on a dark panel: never text straight on a
+                // picture. A tint, not a material: the wallpaper behind is already blurred,
+                // and a blur as tall as the whole playlist made scrolling lag.
                 .background {
                     if wallpaper.isActive {
-                        RoundedRectangle(cornerRadius: 16, style: .continuous).fill(.regularMaterial)
+                        RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color.black.opacity(0.42))
                     }
                 }
                 .padding(.horizontal, 14)
@@ -351,12 +352,20 @@ struct SongRow: View {
                 .controlSize(.small)
                 .help("Add to this playlist")
             } else {
-                // Fixed slots so a liked heart doesn't shift when + appears on hover.
+                // Fixed slots so a liked heart doesn't shift when + appears on hover. The
+                // controls (and +'s popover) only exist while needed: hundreds of idle
+                // buttons made long playlists slow to scroll.
                 HStack(spacing: 12) {
-                    LikeButton(songID: item.id)
-                        .opacity(hovering || pickerOpen || library.isLiked(item.id) ? 1 : 0)
-                    AddToPlaylistButton(songIDs: [item.id], open: $pickerOpen)
-                        .opacity(hovering || pickerOpen ? 1 : 0)
+                    if hovering || pickerOpen || library.isLiked(item.id) {
+                        LikeButton(songID: item.id)
+                    } else {
+                        Color.clear.frame(width: 16)
+                    }
+                    if hovering || pickerOpen {
+                        AddToPlaylistButton(songIDs: [item.id], open: $pickerOpen)
+                    } else {
+                        Color.clear.frame(width: 16)
+                    }
                 }
                 .frame(width: 48)
             }
@@ -382,7 +391,12 @@ struct SongRow: View {
         }
         .contentShape(Rectangle())
         .stableHover { hovering = $0 }
-        .modifier(OnDwell { player.prefetch(item.song) })
+        .task(id: hovering) {
+            // Resting on a row for a moment starts resolving it (one hover tracker per row).
+            guard hovering else { return }
+            try? await Task.sleep(for: .milliseconds(500))
+            if !Task.isCancelled { player.prefetch(item.song) }
+        }
         .onTapGesture(perform: tap)
     }
 }

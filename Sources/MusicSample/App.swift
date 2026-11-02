@@ -80,6 +80,7 @@ struct RootView: View {
     @Environment(WallpaperStore.self) private var wallpaper
     @Environment(\.colorScheme) private var colorScheme
     @State private var canvasSize = CGSize.zero
+    @State private var sidebarEdge: CGFloat = 0
     @Environment(Router.self) private var router
     @State private var swipe = SwipeTracker()
 
@@ -88,6 +89,11 @@ struct RootView: View {
             NavigationSplitView {
                 SidebarView()
                     .navigationSplitViewColumnWidth(min: 200, ideal: 230, max: 300)
+                    .background {
+                        GeometryReader { proxy in
+                            Color.clear.preference(key: SidebarEdgeKey.self, value: proxy.frame(in: .global).maxX)
+                        }
+                    }
                     // The sidebar shows its slice of the wallpaper through a light material.
                     .background {
                         if wallpaper.isActive {
@@ -129,6 +135,23 @@ struct RootView: View {
                     }
                 }
             }
+            .onPreferenceChange(SidebarEdgeKey.self) { sidebarEdge = $0 }
+            // AppKit leaves a seam at the split divider that no setting removes; cover it
+            // with a strip of the sidebar's own background (window-aligned, so it blends).
+            .overlay(alignment: .topLeading) {
+                if wallpaper.isActive, sidebarEdge > 0 {
+                    ZStack {
+                        WallpaperBackground()
+                        Rectangle().fill(.ultraThinMaterial)
+                    }
+                    .environment(\.colorScheme, .dark)
+                    .frame(width: 6)
+                    .frame(maxHeight: .infinity)
+                    .offset(x: sidebarEdge - 4)
+                    .ignoresSafeArea()
+                    .allowsHitTesting(false)
+                }
+            }
             .toolbar(router.videoFullscreen ? .hidden : .automatic, for: .windowToolbar)
             // No seam lines over a wallpaper: they read as harsh black cuts through the picture.
             .toolbarBackgroundVisibility(wallpaper.isActive ? .hidden : .automatic, for: .windowToolbar)
@@ -143,7 +166,16 @@ struct RootView: View {
                 Color.clear.preference(key: CanvasSizeKey.self, value: proxy.size)
             }
             .ignoresSafeArea()
-            if wallpaper.isActive { WallpaperBackground() }
+            if wallpaper.isActive {
+                // Same as the sidebar's own background, so the 1-pt gap AppKit leaves at
+                // the split divider reads as the sidebar's edge instead of a seam.
+                ZStack {
+                    WallpaperBackground()
+                    Rectangle().fill(.ultraThinMaterial)
+                }
+                .environment(\.colorScheme, .dark)
+                .ignoresSafeArea()
+            }
         }
         .onPreferenceChange(CanvasSizeKey.self) { canvasSize = $0 }
         .onChange(of: wallpaper.isActive, initial: true) { _, on in
@@ -281,22 +313,33 @@ private struct CanvasSizeKey: PreferenceKey {
 }
 
 /// The line between sidebar and content is a 1-pixel vibrancy strip inside AppKit's
-/// split divider view; SwiftUI has no setting for it. Hidden over a wallpaper,
-/// where it reads as a black seam; untouched otherwise.
+/// split divider view; SwiftUI has no setting for it. Hidden over a wallpaper, where
+/// it reads as a seam; untouched otherwise. (The gap under it is covered by the
+/// window background matching the sidebar.)
 enum SplitDividerPatch {
     static var hidden = false {
         didSet { apply() }
     }
 
     static func apply() {
-        for window in NSApp.windows { walk(window.contentView?.superview) }
+        for window in NSApp.windows {
+            walk(window.contentView?.superview)
+            window.contentView?.needsLayout = true
+        }
     }
+
 
     private static func walk(_ view: NSView?) {
         guard let view else { return }
-        if String(describing: type(of: view)).contains("SplitDividerView") {
-            view.subviews.forEach { $0.isHidden = hidden }
+        // The vibrant divider paints its own strip over the sidebar's edge; hide it whole.
+        if String(describing: type(of: view)) == "NSVibrantSplitDividerView" {
+            view.isHidden = hidden
         }
         view.subviews.forEach(walk)
     }
+}
+
+private struct SidebarEdgeKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
 }

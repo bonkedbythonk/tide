@@ -114,7 +114,9 @@ enum SleepTimer: String, CaseIterable, Identifiable {
     init() {
         engine.onFileLoaded = { [weak self] in self?.awaitingFile = false }
         engine.onVideoAspect = { [weak self] aspect in
-            if aspect > 0.2 { self?.videoAspect = aspect }
+            // Ignore tiny changes so the stage never jitters.
+            guard let self, aspect > 0.2, abs(aspect - self.videoAspect) > 0.03 else { return }
+            self.videoAspect = aspect
         }
         engine.onTime = { [weak self] t in
             guard let self, !self.awaitingFile else { return }

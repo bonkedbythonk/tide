@@ -64,6 +64,8 @@ final class MpvEngine {
     var onError: ((String) -> Void)?
 
     private var mpv: OpaquePointer?
+    private var pictureWidth = 0
+    private var pictureHeight = 0
     private var nudgeRestore: DispatchWorkItem?
 
     init() {
@@ -100,7 +102,11 @@ final class MpvEngine {
         mpv_observe_property(handle, 2, "duration", MPV_FORMAT_DOUBLE)
         mpv_observe_property(handle, 3, "pause", MPV_FORMAT_FLAG)
         mpv_observe_property(handle, 4, "paused-for-cache", MPV_FORMAT_FLAG)
-        mpv_observe_property(handle, 5, "video-params/aspect", MPV_FORMAT_DOUBLE)
+        // The decoded picture's real size. Not "video-params/aspect": that follows
+        // video-aspect-override, which the resize nudge changes, and sizing the stage
+        // from it made a square picture resize back and forth forever.
+        mpv_observe_property(handle, 5, "width", MPV_FORMAT_INT64)
+        mpv_observe_property(handle, 6, "height", MPV_FORMAT_INT64)
 
         videoView.onDrawableSizeChanged = { [weak self] _ in self?.nudgeVideoSize() }
 
@@ -189,14 +195,19 @@ final class MpvEngine {
                 guard let p = event.data?.assumingMemoryBound(to: mpv_event_property.self).pointee,
                       let data = p.data else { continue }
                 let name = String(cString: p.name)
-                if p.format == MPV_FORMAT_DOUBLE {
+                if p.format == MPV_FORMAT_INT64 {
+                    let value = Int(data.assumingMemoryBound(to: Int64.self).pointee)
+                    DispatchQueue.main.async { [weak self] in
+                        guard let self else { return }
+                        if name == "width" { self.pictureWidth = value } else { self.pictureHeight = value }
+                        if self.pictureWidth > 0, self.pictureHeight > 0 {
+                            self.onVideoAspect?(Double(self.pictureWidth) / Double(self.pictureHeight))
+                        }
+                    }
+                } else if p.format == MPV_FORMAT_DOUBLE {
                     let value = data.assumingMemoryBound(to: Double.self).pointee
                     DispatchQueue.main.async { [weak self] in
-                        switch name {
-                        case "time-pos": self?.onTime?(value)
-                        case "duration": self?.onDuration?(value)
-                        default: self?.onVideoAspect?(value)
-                        }
+                        if name == "time-pos" { self?.onTime?(value) } else { self?.onDuration?(value) }
                     }
                 } else if p.format == MPV_FORMAT_FLAG {
                     let value = data.assumingMemoryBound(to: Int32.self).pointee != 0

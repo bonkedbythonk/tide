@@ -6,13 +6,13 @@ Do not open a public issue. Use GitHub's
 [private advisory form](https://github.com/bonkedbythonk/tide/security/advisories/new)
 so the report stays private until a fix is out.
 
-Include the commit you built from, your macOS version, and the steps to
+Include the Tide version (or the commit you built from), your macOS version, and the steps to
 reproduce. Tide is maintained by one person: expect a reply within about a
 week, and a fix or a decision on it shortly after.
 
 ## Supported versions
 
-Only the latest commit on `main`. Fixes are not backported.
+Only the latest release and the latest commit on `main`. Fixes are not backported.
 
 ## Scope
 

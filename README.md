@@ -4,6 +4,7 @@
   <p>A fast, native Mac app for YouTube Music.</p>
 
   <p>
+    <img src="https://img.shields.io/github/v/release/bonkedbythonk/tide?style=flat-square&label=latest" alt="Latest Release">
     <img src="https://img.shields.io/badge/platform-macOS%2015%2B-lightgrey?style=flat-square" alt="Platform">
     <img src="https://img.shields.io/badge/license-GPLv3-blue?style=flat-square" alt="License">
   </p>
@@ -35,18 +36,36 @@ The screenshots use made-up songs and covers (`Scripts/demo.sh`).
 
 ## Install
 
-There are no releases yet. Build it from source:
+Apple silicon Mac, macOS 15 or later. Tide plays through yt-dlp, so install it
+first with [Homebrew](https://brew.sh):
 
 ```bash
 brew install yt-dlp deno
+```
+
+Then download `Tide-<version>.zip` from
+[Releases](https://github.com/bonkedbythonk/tide/releases), unzip it and drag
+Tide to Applications. The app is not notarized, so macOS blocks the first
+launch: go to System Settings > Privacy & Security and click **Open Anyway**,
+or run `xattr -dr com.apple.quarantine /Applications/Tide.app`. Sign in with
+your Google account on first launch.
+
+Keep yt-dlp current with `brew upgrade yt-dlp`; most playback failures are an
+outdated yt-dlp.
+
+<details>
+<summary>Build from source</summary>
+
+```bash
 git clone https://github.com/bonkedbythonk/tide.git
 cd tide
 ./run.sh
 ```
 
-`run.sh` builds a release binary, wraps it in `Tide.app` and opens it. You need an
-Apple silicon Mac on macOS 15 or later and the Xcode command line tools. Sign in with
-your Google account on first launch.
+`run.sh` builds a release binary, wraps it in `Tide.app` and opens it. Needs the
+Xcode command line tools.
+
+</details>
 
 ## Disclaimer
 

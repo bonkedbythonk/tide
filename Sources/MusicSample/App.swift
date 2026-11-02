@@ -80,109 +80,87 @@ struct RootView: View {
     @Environment(WallpaperStore.self) private var wallpaper
     @Environment(\.colorScheme) private var colorScheme
     @State private var canvasSize = CGSize.zero
-    @State private var sidebarEdge: CGFloat = 0
     @Environment(Router.self) private var router
     @State private var swipe = SwipeTracker()
 
+    private var content: some View {
+        ZStack {
+            WallpaperBackground()
+            DetailView()
+                .environment(\.colorScheme, wallpaper.isActive ? .dark : colorScheme)
+            if router.showNowPlaying {
+                NowPlayingView()
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .zIndex(1)
+            }
+        }
+        .animation(.easeOut(duration: 0.22), value: router.current)
+        .inspector(isPresented: Binding(
+            get: { router.panelVisible && !router.showNowPlaying },
+            set: { router.panelVisible = $0 }
+        )) {
+            SidePanelView()
+                .inspectorColumnWidth(min: 260, ideal: 310, max: 420)
+        }
+        .toolbar {
+            ToolbarItemGroup(placement: .navigation) {
+                Button { router.goBack() } label: { Image(systemName: "chevron.left") }
+                    .disabled(router.backStack.isEmpty && !router.showNowPlaying)
+                    .help("Back (swipe right with two fingers)")
+                Button { router.goForward() } label: { Image(systemName: "chevron.right") }
+                    .disabled(router.forwardStack.isEmpty)
+                    .help("Forward")
+            }
+        }
+    }
+
     var body: some View {
         VStack(spacing: 0) {
-            NavigationSplitView {
-                SidebarView()
-                    .navigationSplitViewColumnWidth(min: 200, ideal: 230, max: 300)
-                    .background {
-                        GeometryReader { proxy in
-                            Color.clear.preference(key: SidebarEdgeKey.self, value: proxy.frame(in: .global).maxX)
-                        }
-                    }
-                    // The sidebar shows its slice of the wallpaper through a light material.
-                    .background {
-                        if wallpaper.isActive {
-                            ZStack {
-                                WallpaperBackground()
-                                Rectangle().fill(.ultraThinMaterial)
+            Group {
+                if wallpaper.isActive {
+                    // Over a wallpaper: our own side-by-side layout. The system split
+                    // view draws a divider seam that can't be styled away.
+                    HStack(spacing: 0) {
+                        SidebarView()
+                            .frame(width: 230)
+                            .background {
+                                ZStack {
+                                    WallpaperBackground()
+                                    Rectangle().fill(.ultraThinMaterial)
+                                }
+                                .ignoresSafeArea()
                             }
-                            .ignoresSafeArea()
-                        }
+                            .environment(\.colorScheme, .dark)
+                        content
                     }
-                    .environment(\.colorScheme, wallpaper.isActive ? .dark : colorScheme)
-            } detail: {
-                ZStack {
-                    WallpaperBackground()
-                    DetailView()
-                        .environment(\.colorScheme, wallpaper.isActive ? .dark : colorScheme)
-                    if router.showNowPlaying {
-                        NowPlayingView()
-                            .transition(.move(edge: .bottom).combined(with: .opacity))
-                            .zIndex(1)
+                } else {
+                    NavigationSplitView {
+                        SidebarView()
+                            .navigationSplitViewColumnWidth(min: 200, ideal: 230, max: 300)
+                    } detail: {
+                        content
                     }
-                }
-                .animation(.easeOut(duration: 0.22), value: router.current)
-                .inspector(isPresented: Binding(
-                    get: { router.panelVisible && !router.showNowPlaying },
-                    set: { router.panelVisible = $0 }
-                )) {
-                    SidePanelView()
-                        .inspectorColumnWidth(min: 260, ideal: 310, max: 420)
-                }
-                .toolbar {
-                    ToolbarItemGroup(placement: .navigation) {
-                        Button { router.goBack() } label: { Image(systemName: "chevron.left") }
-                            .disabled(router.backStack.isEmpty && !router.showNowPlaying)
-                            .help("Back (swipe right with two fingers)")
-                        Button { router.goForward() } label: { Image(systemName: "chevron.right") }
-                            .disabled(router.forwardStack.isEmpty)
-                            .help("Forward")
-                    }
-                }
-            }
-            .onPreferenceChange(SidebarEdgeKey.self) { sidebarEdge = $0 }
-            // AppKit leaves a seam at the split divider that no setting removes; cover it
-            // with a strip of the sidebar's own background (window-aligned, so it blends).
-            .overlay(alignment: .topLeading) {
-                if wallpaper.isActive, sidebarEdge > 0 {
-                    ZStack {
-                        WallpaperBackground()
-                        Rectangle().fill(.ultraThinMaterial)
-                    }
-                    .environment(\.colorScheme, .dark)
-                    .frame(width: 6)
-                    .frame(maxHeight: .infinity)
-                    .offset(x: sidebarEdge - 4)
-                    .ignoresSafeArea()
-                    .allowsHitTesting(false)
                 }
             }
             .toolbar(router.videoFullscreen ? .hidden : .automatic, for: .windowToolbar)
-            // No seam lines over a wallpaper: they read as harsh black cuts through the picture.
-            .toolbarBackgroundVisibility(wallpaper.isActive ? .hidden : .automatic, for: .windowToolbar)
             if !wallpaper.isActive { Divider() }
             PlayerBar()
         }
         .background {
-            // Reports the window's size so every wallpaper slice lines up, and puts the
-            // wallpaper behind the whole window so the 1-pt gap at the split divider
-            // shows wallpaper instead of the black window background.
+            // Reports the window's size so every wallpaper slice lines up.
             GeometryReader { proxy in
                 Color.clear.preference(key: CanvasSizeKey.self, value: proxy.size)
             }
             .ignoresSafeArea()
-            if wallpaper.isActive {
-                // Same as the sidebar's own background, so the 1-pt gap AppKit leaves at
-                // the split divider reads as the sidebar's edge instead of a seam.
-                ZStack {
-                    WallpaperBackground()
-                    Rectangle().fill(.ultraThinMaterial)
-                }
-                .environment(\.colorScheme, .dark)
-                .ignoresSafeArea()
-            }
         }
         .onPreferenceChange(CanvasSizeKey.self) { canvasSize = $0 }
+        // Over a wallpaper the top bar keeps its blurred background (so scrolled content
+        // doesn't run into the title) but loses the line under it.
         .onChange(of: wallpaper.isActive, initial: true) { _, on in
-            SplitDividerPatch.hidden = on
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { SplitDividerPatch.apply() }
+            DispatchQueue.main.async {
+                for window in NSApp.windows { window.titlebarSeparatorStyle = on ? .none : .automatic }
+            }
         }
-        .onChange(of: canvasSize) { SplitDividerPatch.apply() }
         .environment(\.wallpaperCanvas, canvasSize)
         .overlay(alignment: .bottomTrailing) {
             if player.videoMode, player.current != nil, !router.showNowPlaying, !router.videoFullscreen,
@@ -312,34 +290,4 @@ private struct CanvasSizeKey: PreferenceKey {
     static func reduce(value: inout CGSize, nextValue: () -> CGSize) { value = nextValue() }
 }
 
-/// The line between sidebar and content is a 1-pixel vibrancy strip inside AppKit's
-/// split divider view; SwiftUI has no setting for it. Hidden over a wallpaper, where
-/// it reads as a seam; untouched otherwise. (The gap under it is covered by the
-/// window background matching the sidebar.)
-enum SplitDividerPatch {
-    static var hidden = false {
-        didSet { apply() }
-    }
 
-    static func apply() {
-        for window in NSApp.windows {
-            walk(window.contentView?.superview)
-            window.contentView?.needsLayout = true
-        }
-    }
-
-
-    private static func walk(_ view: NSView?) {
-        guard let view else { return }
-        // The vibrant divider paints its own strip over the sidebar's edge; hide it whole.
-        if String(describing: type(of: view)) == "NSVibrantSplitDividerView" {
-            view.isHidden = hidden
-        }
-        view.subviews.forEach(walk)
-    }
-}
-
-private struct SidebarEdgeKey: PreferenceKey {
-    static let defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
-}

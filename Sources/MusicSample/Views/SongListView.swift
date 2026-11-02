@@ -77,40 +77,36 @@ struct SongListView: View {
         let suggestions = suggestionItems
         let visibleSongs = rows.map(\.song)
         let suggestedSongs = suggestions.map(\.song)
-        ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
-                header(visibleSongs)
-                LazyVStack(spacing: 2) {
-                    ForEach(rows) { item in
-                        row(item, in: rows, playlist: visibleSongs, suggested: suggestedSongs)
-                    }
-                    if !suggestions.isEmpty {
-                        Text("Suggestions")
-                            .font(.title3.bold())
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal, 8)
-                            .padding(.top, 22)
-                            .padding(.bottom, 6)
-                        ForEach(suggestions) { item in
-                            row(item, in: suggestions, playlist: visibleSongs, suggested: suggestedSongs)
-                        }
-                    }
+        // A List, not a lazy stack: it recycles rows like a table, so flinging through
+        // hundreds of songs only updates rows that already exist.
+        List {
+            header(visibleSongs)
+                .listRowInsets(EdgeInsets())
+                .listRowBackground(Color.clear)
+                .listRowSeparator(.hidden)
+            ForEach(Array(rows.enumerated()), id: \.element.id) { index, item in
+                row(item, in: rows, playlist: visibleSongs, suggested: suggestedSongs)
+                    .modifier(PanelRow(index: index, count: rows.count, on: wallpaper.isActive))
+            }
+            if !suggestions.isEmpty {
+                Text("Suggestions")
+                    .font(.title3.bold())
+                    .padding(.top, 22)
+                    .padding(.bottom, 6)
+                    .listRowInsets(EdgeInsets(top: 0, leading: 32, bottom: 0, trailing: 32))
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
+                ForEach(Array(suggestions.enumerated()), id: \.element.id) { index, item in
+                    row(item, in: suggestions, playlist: visibleSongs, suggested: suggestedSongs)
+                        .modifier(PanelRow(index: index, count: suggestions.count, on: wallpaper.isActive))
                 }
-                .padding(10)
-                // Over a wallpaper the list sits on a dark panel: never text straight on a
-                // picture. A tint, not a material: the wallpaper behind is already blurred,
-                // and a blur as tall as the whole playlist made scrolling lag.
-                .background {
-                    if wallpaper.isActive {
-                        RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color.black.opacity(0.42))
-                    }
-                }
-                .padding(.horizontal, 14)
-                .padding(.bottom, 20)
-                .opacity(appeared ? 1 : 0)
-                .offset(y: appeared ? 0 : 28)
             }
         }
+        .listStyle(.plain)
+        .scrollContentBackground(.hidden)
+        .environment(\.defaultMinListRowHeight, 1)
+        .opacity(appeared ? 1 : 0)
+        .offset(y: appeared ? 0 : 28)
         .onAppear {
             withAnimation(.spring(duration: 0.5, bounce: 0.18)) { appeared = true }
         }
@@ -398,5 +394,34 @@ struct SongRow: View {
             if !Task.isCancelled { player.prefetch(item.song) }
         }
         .onTapGesture(perform: tap)
+    }
+}
+
+/// List-row chrome for the clean list: no separators, even spacing, and over a
+/// wallpaper a dark panel (a tint, not a blur) whose first and last rows are rounded.
+private struct PanelRow: ViewModifier {
+    let index: Int
+    let count: Int
+    let on: Bool
+
+    func body(content: Content) -> some View {
+        content
+            .listRowInsets(EdgeInsets(top: 1, leading: 24, bottom: 1, trailing: 24))
+            .listRowSeparator(.hidden)
+            .listRowBackground(
+                Group {
+                    if on {
+                        UnevenRoundedRectangle(
+                            topLeadingRadius: index == 0 ? 16 : 0, bottomLeadingRadius: index == count - 1 ? 16 : 0,
+                            bottomTrailingRadius: index == count - 1 ? 16 : 0, topTrailingRadius: index == 0 ? 16 : 0,
+                            style: .continuous
+                        )
+                        .fill(Color.black.opacity(0.42))
+                        .padding(.horizontal, 14)
+                    } else {
+                        Color.clear
+                    }
+                }
+            )
     }
 }

@@ -86,6 +86,9 @@ enum SleepTimer: String, CaseIterable, Identifiable {
     @ObservationIgnored private var fadeInWhenPlaying = false
     /// A switch waits for the old track's fade-out to finish before loading the new one.
     @ObservationIgnored private var fadeOutEnds = Date.distantPast
+    /// Between loadfile and mpv's "file loaded", position and length reports still
+    /// belong to the previous track; they're ignored so the bar doesn't jump.
+    @ObservationIgnored private var awaitingFile = false
     @ObservationIgnored private let resolver = StreamResolver()
     @ObservationIgnored private var nowPlaying: NowPlayingCenter?
     @ObservationIgnored private var loadToken = 0
@@ -98,8 +101,9 @@ enum SleepTimer: String, CaseIterable, Identifiable {
     var length: TimeInterval { duration > 0 ? duration : (current?.duration ?? 0) }
 
     init() {
+        engine.onFileLoaded = { [weak self] in self?.awaitingFile = false }
         engine.onTime = { [weak self] t in
-            guard let self, !self.isLoading else { return }
+            guard let self, !self.isLoading, !self.awaitingFile else { return }
             self.position = t
             if self.fadeInWhenPlaying {
                 self.fadeInWhenPlaying = false
@@ -109,8 +113,9 @@ enum SleepTimer: String, CaseIterable, Identifiable {
             }
         }
         engine.onDuration = { [weak self] d in
-            self?.duration = d
-            self?.publishNowPlaying()
+            guard let self, !self.awaitingFile else { return }
+            self.duration = d
+            self.publishNowPlaying()
         }
         engine.onPause = { [weak self] paused in
             guard let self, !self.isLoading, self.current != nil else { return }
@@ -170,6 +175,7 @@ enum SleepTimer: String, CaseIterable, Identifiable {
                     self.applyVolume()
                 }
                 self.fadeInWhenPlaying = fadeIn
+                self.awaitingFile = true
                 self.engine.load(audio: streams.audio, video: streams.video, start: start, paused: !autoplay,
                                  gainDb: self.matchLoudness ? streams.gainDb : 0)
                 self.isLoading = false

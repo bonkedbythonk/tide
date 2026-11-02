@@ -27,6 +27,7 @@ struct PageView: View {
 struct SongRowItem: Identifiable {
     let number: Int
     let song: Song
+    var isSuggestion = false
     var id: String { song.id }
     var title: String { song.title }
     var artist: String { song.artist }
@@ -46,6 +47,7 @@ struct SongListView: View {
     @State private var sortOrder = [KeyPathComparator(\SongRowItem.number)]
     @State private var filter = ""
     @State private var filterFocused = false
+    @State private var appeared = false
 
     private var items: [SongRowItem] {
         var seen = Set<String>()
@@ -58,9 +60,21 @@ struct SongListView: View {
         return filtered.sorted(using: sortOrder)
     }
 
+    /// YouTube's suggestions, listed in their own section under the playlist.
+    private var suggestionItems: [SongRowItem] {
+        let inPlaylist = Set(songs.map(\.id))
+        var seen = Set<String>()
+        return (page.suggestions ?? [])
+            .filter { !inPlaylist.contains($0.id) && seen.insert($0.id).inserted }
+            .map { SongRowItem(number: 0, song: $0, isSuggestion: true) }
+    }
+
     var body: some View {
         let rows = items
+        let suggestions = suggestionItems
         let visibleSongs = rows.map(\.song)
+        let suggestedSongs = suggestions.map(\.song)
+        let allRows = rows + suggestions
         let currentID = player.current?.id
         VStack(spacing: 0) {
             header(visibleSongs)
@@ -70,6 +84,8 @@ struct SongListView: View {
                         Image(systemName: "waveform")
                             .foregroundStyle(Color.accentColor)
                             .symbolEffect(.variableColor.iterative.dimInactiveLayers, isActive: player.isPlaying)
+                    } else if item.isSuggestion {
+                        Image(systemName: "sparkles").foregroundStyle(.secondary)
                     } else {
                         Text("\(item.number)").foregroundStyle(.secondary).monospacedDigit()
                     }
@@ -79,7 +95,7 @@ struct SongListView: View {
                     HStack(spacing: 8) {
                         Artwork(hue: item.song.hue, url: item.song.artwork, side: 28, radius: 4, symbol: nil)
                         Text(item.title)
-                            .foregroundStyle(currentID == item.id ? Color.accentColor : Color.primary)
+                            .foregroundStyle(currentID == item.id ? Color.accentColor : item.isSuggestion ? Color.secondary : Color.primary)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .contentShape(Rectangle())
@@ -89,12 +105,25 @@ struct SongListView: View {
                 TableColumn("Artist", value: \.artist)
                 TableColumn("Album", value: \.album)
                 TableColumn("") { item in
-                    HStack(spacing: 10) {
-                        LikeButton(songID: item.id)
-                        StandaloneAddButton(songIDs: [item.id])
+                    if item.isSuggestion, let playlistID {
+                        // One click puts a suggestion into this playlist; no playlist picker.
+                        Button {
+                            withAnimation(.snappy) { library.add([item.id], to: playlistID) }
+                        } label: {
+                            Label("Add", systemImage: "plus")
+                                .font(.callout.weight(.semibold))
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .help("Add to this playlist")
+                    } else {
+                        HStack(spacing: 10) {
+                            LikeButton(songID: item.id)
+                            StandaloneAddButton(songIDs: [item.id])
+                        }
                     }
                 }
-                .width(52)
+                .width(64)
                 TableColumn("Time", value: \.duration) { item in
                     Text(item.duration > 0 ? formatTime(item.duration) : "")
                         .foregroundStyle(.secondary).monospacedDigit()
@@ -105,17 +134,31 @@ struct SongListView: View {
                     TableRow(item)
                         .draggable(SongDrag.payload(dragIDs(for: item, in: rows)))
                 }
+                if !suggestions.isEmpty {
+                    Section {
+                        ForEach(suggestions) { item in
+                            TableRow(item).draggable(SongDrag.payload([item.id]))
+                        }
+                    } header: {
+                        Text("Suggestions").font(.headline)
+                    }
+                }
             }
             .contextMenu(forSelectionType: String.self) { ids in
-                SongMenu(songs: library.songs(orderedIDs(ids, in: rows)), playlistID: playlistID)
+                SongMenu(songs: library.songs(orderedIDs(ids, in: allRows)), playlistID: playlistID)
             } primaryAction: { ids in
-                if let id = ids.first, let s = library.song(id) { player.play(s, in: visibleSongs) }
+                if let id = ids.first, let s = library.song(id) { play(s, visibleSongs, suggestedSongs) }
             }
             .onChange(of: selection) { _, new in
                 guard new.count == 1, let id = new.first, let s = library.song(id),
                       NSEvent.modifierFlags.isDisjoint(with: [.command, .shift]) else { return }
-                ClickToPlay.arm { player.play(s, in: visibleSongs) }
+                ClickToPlay.arm { play(s, visibleSongs, suggestedSongs) }
             }
+            .opacity(appeared ? 1 : 0)
+            .offset(y: appeared ? 0 : 28)
+        }
+        .onAppear {
+            withAnimation(.spring(duration: 0.5, bounce: 0.18)) { appeared = true }
         }
         // Resolve the first songs now, so Play starts without waiting on yt-dlp.
         .task(id: page.id) { songs.prefix(2).forEach { player.prefetch($0) } }
@@ -132,6 +175,8 @@ struct SongListView: View {
         return HStack(alignment: .bottom, spacing: 20) {
             Artwork(hue: Double(page.id.stableHash % 1000) / 1000, url: page.artwork, side: 150, radius: 10)
                 .shadow(color: .black.opacity(0.2), radius: 10, y: 4)
+                .scaleEffect(appeared ? 1 : 0.8, anchor: .bottomLeading)
+                .opacity(appeared ? 1 : 0)
             VStack(alignment: .leading, spacing: 6) {
                 Text(page.title).font(.system(size: 34, weight: .bold)).lineLimit(1)
                 Text([page.subtitle, "\(visible.count) songs", minutes > 0 ? "\(minutes) min" : ""]
@@ -146,9 +191,6 @@ struct SongListView: View {
                     Button { player.playAll(visible, shuffled: true) } label: {
                         Label("Shuffle", systemImage: "shuffle")
                     }
-                    if let suggestions = page.suggestions, !suggestions.isEmpty {
-                        SuggestionsButton(songs: suggestions)
-                    }
                     if selection.count > 1 {
                         Text("\(selection.count) selected — drag them onto a playlist in the sidebar")
                             .font(.callout).foregroundStyle(.secondary)
@@ -157,9 +199,16 @@ struct SongListView: View {
                 .controlSize(.large)
                 .padding(.top, 6)
             }
+            .offset(x: appeared ? 0 : -16)
+            .opacity(appeared ? 1 : 0)
             Spacer()
         }
         .padding(24)
+    }
+
+    /// A suggestion plays among the suggestions, a playlist song among the playlist.
+    private func play(_ song: Song, _ playlist: [Song], _ suggested: [Song]) {
+        player.play(song, in: playlist.contains(song) ? playlist : suggested)
     }
 
     /// Dragging a selected row drags the whole selection, in the order shown.
@@ -236,22 +285,3 @@ struct SearchView: View {
     }
 }
 
-/// YouTube's suggested songs for a playlist, kept apart from the playlist itself.
-/// Add the ones you want with + or by dragging them onto a playlist.
-struct SuggestionsButton: View {
-    let songs: [Song]
-    @State private var open = false
-
-    var body: some View {
-        Button { open = true } label: {
-            Label("Suggestions", systemImage: "sparkles")
-        }
-        .popover(isPresented: $open, arrowEdge: .bottom) {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Suggested for this playlist").font(.headline).padding(.horizontal, 18).padding(.top, 14)
-                ScrollView { SongGrid(songs: songs).padding(.bottom, 12) }
-            }
-            .frame(width: 620, height: 420)
-        }
-    }
-}

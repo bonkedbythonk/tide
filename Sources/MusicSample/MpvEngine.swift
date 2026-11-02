@@ -59,6 +59,7 @@ final class MpvEngine {
     var onPause: ((Bool) -> Void)?
     var onBuffering: ((Bool) -> Void)?
     var onEnded: (() -> Void)?
+    var onFileLoaded: (() -> Void)?
     var onError: ((String) -> Void)?
 
     private var mpv: OpaquePointer?
@@ -186,6 +187,8 @@ final class MpvEngine {
                         if name == "pause" { self?.onPause?(value) } else { self?.onBuffering?(value) }
                     }
                 }
+            case MPV_EVENT_FILE_LOADED:
+                DispatchQueue.main.async { [weak self] in self?.onFileLoaded?() }
             case MPV_EVENT_END_FILE:
                 guard let end = event.data?.assumingMemoryBound(to: mpv_event_end_file.self).pointee else { continue }
                 if end.reason == MPV_END_FILE_REASON_EOF {

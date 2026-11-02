@@ -76,7 +76,9 @@ struct TransportControls: View {
     @Environment(Player.self) private var player
 
     var body: some View {
-        let duration = max(player.length, 1)
+        // Songs from Home arrive without a length; show none until mpv knows it.
+        let known = player.length > 0
+        let duration = known ? player.length : 1
         VStack(spacing: 4) {
             HStack(spacing: 24) {
                 Button { player.shuffle.toggle() } label: {
@@ -99,14 +101,14 @@ struct TransportControls: View {
             }
             .buttonStyle(.plain)
             HStack(spacing: 8) {
-                Text(formatTime(player.position)).frame(width: 40, alignment: .trailing)
+                Text(known ? formatTime(player.position) : "–:––").frame(width: 40, alignment: .trailing)
                 Slider(
-                    value: Binding(get: { min(player.position, duration) }, set: { player.seek($0) }),
+                    value: Binding(get: { known ? min(player.position, duration) : 0 }, set: { player.seek($0) }),
                     in: 0...duration
                 )
                 .controlSize(.mini)
-                .disabled(player.current == nil)
-                Text(formatTime(duration)).frame(width: 40, alignment: .leading)
+                .disabled(!known)
+                Text(known ? formatTime(duration) : "–:––").frame(width: 40, alignment: .leading)
             }
             .font(.caption)
             .monospacedDigit()

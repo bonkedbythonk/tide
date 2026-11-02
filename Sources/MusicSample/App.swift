@@ -98,6 +98,17 @@ struct RootView: View {
             Divider()
             PlayerBar()
         }
+        .overlay(alignment: .bottomTrailing) {
+            if player.videoMode, player.current != nil, !router.showNowPlaying, !router.videoFullscreen,
+               !router.miniPlayerHidden {
+                VideoMiniPlayer()
+                    .padding(.trailing, 20)
+                    .padding(.bottom, 96)
+                    .transition(.scale(scale: 0.85, anchor: .bottomTrailing).combined(with: .opacity))
+            }
+        }
+        .animation(.spring(duration: 0.4, bounce: 0.15), value: router.showNowPlaying)
+        .onChange(of: player.videoMode) { _, on in if on { router.miniPlayerHidden = false } }
         .overlay {
             if router.videoFullscreen {
                 VideoFullscreenView().transition(.opacity)

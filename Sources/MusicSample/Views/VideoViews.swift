@@ -205,3 +205,55 @@ struct VideoFullscreenView: View {
         }
     }
 }
+
+/// Floating video in the corner of the window while a music video plays and
+/// Now Playing is closed. Click to open Now Playing, double-click for fullscreen.
+struct VideoMiniPlayer: View {
+    @Environment(Player.self) private var player
+    @Environment(Router.self) private var router
+    @State private var hovering = false
+
+    var body: some View {
+        ZStack {
+            VideoSurface(active: true)
+            if player.isLoading { ProgressView() }
+            // Clicks land on this layer; the video itself is AppKit.
+            Color.clear
+                .contentShape(Rectangle())
+                .onTapGesture(count: 2) { router.enterVideoFullscreen() }
+                .onTapGesture { withAnimation(.spring(duration: 0.45, bounce: 0.12)) { router.showNowPlaying = true } }
+            if hovering {
+                VStack {
+                    HStack {
+                        Button { withAnimation(.snappy) { router.miniPlayerHidden = true } } label: {
+                            Image(systemName: "xmark")
+                        }
+                        .help("Hide the mini player")
+                        Spacer()
+                        Button { router.enterVideoFullscreen() } label: {
+                            Image(systemName: "arrow.up.left.and.arrow.down.right")
+                        }
+                        .help("Fullscreen")
+                    }
+                    Spacer()
+                    Button(action: player.toggle) {
+                        Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
+                            .font(.title2)
+                            .contentTransition(.symbolEffect(.replace))
+                    }
+                    Spacer()
+                }
+                .font(.callout.weight(.semibold))
+                .foregroundStyle(.white)
+                .buttonStyle(.plain)
+                .padding(10)
+                .background(.black.opacity(0.35))
+                .transition(.opacity)
+            }
+        }
+        .frame(width: 320, height: 180)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .shadow(color: .black.opacity(0.35), radius: 16, y: 6)
+        .onHover { h in withAnimation(.easeOut(duration: 0.15)) { hovering = h } }
+    }
+}

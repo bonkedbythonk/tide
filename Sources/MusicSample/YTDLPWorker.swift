@@ -126,16 +126,19 @@ out_lock = threading.Lock()
 local = threading.local()
 
 
-def downloader(client):
+def downloader(client, fmt):
+    # One YoutubeDL per (client, format): yt-dlp builds its format selector once,
+    # in __init__, so changing params["format"] on a reused instance is ignored.
     cache = getattr(local, "ydls", None)
     if cache is None:
         cache = local.ydls = {}
-    if client not in cache:
-        opts = {"quiet": True, "no_warnings": True, "noplaylist": True, "skip_download": True}
+    key = (client, fmt)
+    if key not in cache:
+        opts = {"quiet": True, "no_warnings": True, "noplaylist": True, "skip_download": True, "format": fmt}
         if client:
             opts["extractor_args"] = {"youtube": {"player_client": [client]}}
-        cache[client] = yt_dlp.YoutubeDL(opts)
-    return cache[client]
+        cache[key] = yt_dlp.YoutubeDL(opts)
+    return cache[key]
 
 
 def answer(message):
@@ -146,8 +149,7 @@ def answer(message):
 
 def handle(request):
     try:
-        ydl = downloader(request.get("client"))
-        ydl.params["format"] = request["format"]
+        ydl = downloader(request.get("client"), request["format"])
         info = ydl.extract_info(request["url"], download=False)
         formats = info.get("requested_formats") or [info]
         urls = [f["url"] for f in formats if f.get("url")]

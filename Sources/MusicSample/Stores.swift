@@ -71,7 +71,16 @@ enum SleepTimer: String, CaseIterable, Identifiable {
         }
     }
 
+    /// Fade the volume on pause, resume and skips instead of cutting (your smooth-transitions plugin).
+    var smoothTransitions = Prefs.bool("smoothTransitions", true) {
+        didSet { Prefs.set(smoothTransitions, "smoothTransitions") }
+    }
+
     @ObservationIgnored let engine = MpvEngine()
+    @ObservationIgnored private var fadeLevel = 1.0
+    @ObservationIgnored private var fadeTimer: Timer?
+    /// The track ended by itself; the next one starts at full volume, no fade-in.
+    @ObservationIgnored private var advancingNaturally = false
     @ObservationIgnored private let resolver = StreamResolver()
     @ObservationIgnored private var nowPlaying: NowPlayingCenter?
     @ObservationIgnored private var loadToken = 0
@@ -115,6 +124,14 @@ enum SleepTimer: String, CaseIterable, Identifiable {
         }
         loadToken += 1
         let token = loadToken
+        let fadeIn = smoothTransitions && !advancingNaturally
+        advancingNaturally = false
+        // Fade out what's playing while the next track resolves.
+        if isPlaying, !isLoading, smoothTransitions {
+            fade(to: 0, over: 0.15) { [weak self] in
+                if self?.isLoading == true { self?.engine.set("pause", "yes") }
+            }
+        }
         isLoading = true
         isPlaying = autoplay
         position = start
@@ -131,9 +148,13 @@ enum SleepTimer: String, CaseIterable, Identifiable {
                 if wait > 0 { try await Task.sleep(for: .seconds(wait + 0.2)) }
                 guard token == self.loadToken else { return }
                 self.currentGain = streams.gainDb
+                self.fadeTimer?.invalidate()
+                self.fadeLevel = fadeIn ? 0 : 1
+                self.applyVolume()
                 self.engine.load(audio: streams.audio, video: streams.video, start: start, paused: !autoplay,
                                  gainDb: self.matchLoudness ? streams.gainDb : 0)
                 self.isLoading = false
+                if fadeIn { self.fade(to: 1, over: 0.35) }
                 await self.resolver.prefetch(self.upNext.prefix(10).map(\.id), video: video, maxHeight: height)
             } catch {
                 guard token == self.loadToken else { return }
@@ -187,7 +208,19 @@ enum SleepTimer: String, CaseIterable, Identifiable {
         guard current != nil else { return }
         if lastError != nil { return load(at: position) }
         isPlaying.toggle()
-        engine.set("pause", isPlaying ? "no" : "yes")
+        if isPlaying {
+            if smoothTransitions {
+                fadeLevel = 0
+                applyVolume()
+            }
+            engine.set("pause", "no")
+            fade(to: 1, over: 0.25)
+        } else {
+            fade(to: 0, over: 0.2) { [weak self] in
+                guard let self, !self.isPlaying else { return }
+                self.engine.set("pause", "yes")
+            }
+        }
         publishNowPlaying()
     }
 
@@ -220,7 +253,34 @@ enum SleepTimer: String, CaseIterable, Identifiable {
     }
 
     private func trackEnded() {
+        advancingNaturally = true
         if repeatMode == .one { load() } else { next() }
+    }
+
+    /// Ramps the volume between silent (0) and the slider's level (1), then runs `done`.
+    private func fade(to target: Double, over seconds: Double, then done: (() -> Void)? = nil) {
+        fadeTimer?.invalidate()
+        guard smoothTransitions, seconds > 0 else {
+            fadeLevel = target
+            applyVolume()
+            done?()
+            return
+        }
+        let from = fadeLevel
+        let began = Date()
+        let timer = Timer(timeInterval: 1.0 / 60, repeats: true) { [weak self] timer in
+            guard let self else { return timer.invalidate() }
+            let progress = min(1, Date().timeIntervalSince(began) / seconds)
+            self.fadeLevel = from + (target - from) * progress
+            self.applyVolume()
+            if progress >= 1 {
+                timer.invalidate()
+                self.fadeTimer = nil
+                done?()
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        fadeTimer = timer
     }
 
     func seek(_ time: TimeInterval) {
@@ -260,7 +320,7 @@ enum SleepTimer: String, CaseIterable, Identifiable {
     }
 
     /// Squared, so the slider's lower half isn't all "loud" (Pear's exponential-volume).
-    private func applyVolume() { engine.set("volume", String(format: "%.1f", volume * volume * 100)) }
+    private func applyVolume() { engine.set("volume", String(format: "%.1f", volume * volume * 100 * fadeLevel)) }
 
     private func publishNowPlaying() { nowPlaying?.update(song: current, position: position, duration: length, playing: isPlaying) }
 }
@@ -305,6 +365,8 @@ enum SleepTimer: String, CaseIterable, Identifiable {
     var panelTab = PanelTab.queue
 
     var videoFullscreen = false
+    /// The floating video in the corner was closed for the current video session.
+    var miniPlayerHidden = false
 
     @ObservationIgnored var pointerOverShelf = false
     @ObservationIgnored var pointerOverPlayerSong = false

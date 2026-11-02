@@ -232,17 +232,19 @@ struct SoundPopover: View {
             }
             Toggle("Gapless playback", isOn: $player.gapless)
             Toggle("Match YouTube Music loudness", isOn: $player.matchLoudness)
+            Toggle("Smooth transitions", isOn: $player.smoothTransitions)
+                .help("Fade the volume on pause, resume and skip")
             Picker("Equalizer", selection: $player.eq) {
                 ForEach(EQPreset.allCases) { Text($0.rawValue).tag($0) }
             }
             Picker("Sleep timer", selection: $player.sleepTimer) {
                 ForEach(SleepTimer.allCases) { Text($0.rawValue).tag($0) }
             }
-            Text("Loudness matching works. Crossfade, gapless, EQ and sleep timer aren't wired up yet.")
+            Text("Loudness matching and smooth transitions work. Crossfade, gapless, EQ and sleep timer aren't wired up yet.")
                 .font(.caption).foregroundStyle(.secondary)
         }
         .formStyle(.grouped)
-        .frame(width: 330, height: 290)
+        .frame(width: 360, height: 330)
     }
 }
 

@@ -129,6 +129,12 @@ final class MpvEngine {
         mpv_set_property_string(mpv, property, value)
     }
 
+    /// False when mpv refuses, e.g. `ao-volume` while no audio output exists yet.
+    func trySet(_ property: String, _ value: String) -> Bool {
+        guard let mpv else { return false }
+        return mpv_set_property_string(mpv, property, value) >= 0
+    }
+
     func command(_ args: [String]) {
         guard let mpv else { return }
         var cargs = args.map { strdup($0) } + [nil]

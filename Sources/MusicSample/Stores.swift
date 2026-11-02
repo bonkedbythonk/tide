@@ -128,7 +128,7 @@ enum SleepTimer: String, CaseIterable, Identifiable {
         advancingNaturally = false
         // Fade out what's playing while the next track resolves.
         if isPlaying, !isLoading, smoothTransitions {
-            fade(to: 0, over: 0.15) { [weak self] in
+            fade(to: 0, over: 0.3) { [weak self] in
                 if self?.isLoading == true { self?.engine.set("pause", "yes") }
             }
         }
@@ -154,7 +154,7 @@ enum SleepTimer: String, CaseIterable, Identifiable {
                 self.engine.load(audio: streams.audio, video: streams.video, start: start, paused: !autoplay,
                                  gainDb: self.matchLoudness ? streams.gainDb : 0)
                 self.isLoading = false
-                if fadeIn { self.fade(to: 1, over: 0.35) }
+                if fadeIn { self.fade(to: 1, over: 0.5) }
                 await self.resolver.prefetch(self.upNext.prefix(10).map(\.id), video: video, maxHeight: height)
             } catch {
                 guard token == self.loadToken else { return }
@@ -214,9 +214,9 @@ enum SleepTimer: String, CaseIterable, Identifiable {
                 applyVolume()
             }
             engine.set("pause", "no")
-            fade(to: 1, over: 0.25)
+            fade(to: 1, over: 0.35)
         } else {
-            fade(to: 0, over: 0.2) { [weak self] in
+            fade(to: 0, over: 0.3) { [weak self] in
                 guard let self, !self.isPlaying else { return }
                 self.engine.set("pause", "yes")
             }
@@ -244,7 +244,11 @@ enum SleepTimer: String, CaseIterable, Identifiable {
     func previous() {
         guard !queue.isEmpty else { return }
         if position > 3 || index == 0 {
-            seek(0)
+            // Rewind to the start: fade out, jump, fade back in.
+            fade(to: 0, over: 0.2) { [weak self] in
+                self?.seek(0)
+                self?.fade(to: 1, over: 0.4)
+            }
         } else {
             skipForward = false
             index -= 1
@@ -320,7 +324,21 @@ enum SleepTimer: String, CaseIterable, Identifiable {
     }
 
     /// Squared, so the slider's lower half isn't all "loud" (Pear's exponential-volume).
-    private func applyVolume() { engine.set("volume", String(format: "%.1f", volume * volume * 100 * fadeLevel)) }
+    private func applyVolume() { applyFade() }
+
+    /// Fades act on mpv's output volume (`ao-volume`), which the sound device applies
+    /// straight away. mpv's normal volume works before its ~0.2 s audio buffer, so a
+    /// short fade there finished before anyone heard it and the pause then cut in.
+    /// The slider stays on the normal volume. Without an audio output yet, the fade
+    /// falls back to the normal volume.
+    private func applyFade() {
+        let level = volume * volume * 100
+        if engine.trySet("ao-volume", String(format: "%.1f", fadeLevel * 100)) {
+            engine.set("volume", String(format: "%.1f", level))
+        } else {
+            engine.set("volume", String(format: "%.1f", level * fadeLevel))
+        }
+    }
 
     private func publishNowPlaying() { nowPlaying?.update(song: current, position: position, duration: length, playing: isPlaying) }
 }

@@ -34,6 +34,16 @@ import SwiftUI
 
     @MainActor
     func start() async {
+        if Demo.isOn {
+            home = Demo.home
+            playlists = Demo.playlists
+            savedAlbums = Demo.savedAlbums
+            pages = Demo.pages
+            Demo.songs.forEach(remember)
+            liked = Set(Demo.songs.prefix(10).map(\.id))
+            state = .ready
+            return
+        }
         guard await client.loadCookies() else {
             state = .signedOut
             return
@@ -99,6 +109,7 @@ import SwiftUI
     /// A playlist, album, mix or artist page, with every song (up to 2,000).
     @MainActor
     func page(_ id: String) async -> PageData? {
+        if Demo.isOn { return pages[id] }
         if pages[id] == nil, let cached = DiskCache.load(PageData.self, "page2-" + id) {
             cached.songs.forEach(remember)
             pages[id] = cached

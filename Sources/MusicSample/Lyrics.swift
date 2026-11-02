@@ -18,6 +18,7 @@ import Foundation
     @MainActor
     func load(_ song: Song, duration: TimeInterval) async {
         guard results[song.id] == nil, !loading.contains(song.id) else { return }
+        if Demo.isOn { results[song.id] = .synced(Demo.lyrics); return }
         if let cached = DiskCache.load(Result.self, "lyrics-" + song.id) {
             results[song.id] = cached
             return

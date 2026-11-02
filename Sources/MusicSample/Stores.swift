@@ -249,7 +249,7 @@ enum SleepTimer: String, CaseIterable, Identifiable {
     /// The queue, song and spot, so the next launch picks up here (paused).
     private func saveSession(now: Bool = false) {
         lastSessionSave = Date()
-        guard current != nil else { return }
+        guard current != nil, !Demo.isOn else { return }
         // A long queue is cut to the part around the current song.
         let start = max(0, index - 50)
         let end = min(queue.count, index + 500)
@@ -258,6 +258,13 @@ enum SleepTimer: String, CaseIterable, Identifiable {
     }
 
     private func restoreSession() {
+        if Demo.isOn {
+            queue = Demo.songs
+            position = 72
+            duration = queue[0].duration
+            needsLoad = true
+            return
+        }
         guard let s = DiskCache.load(Session.self, "session"), s.queue.indices.contains(s.index) else { return }
         queue = s.queue
         index = s.index

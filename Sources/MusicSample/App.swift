@@ -205,6 +205,7 @@ struct RootView: View {
             swipe.install(router: router, player: player)
             KeyboardShortcuts.install(player: player, router: router)
             player.radio = { [library] in await library.radio(after: $0) }
+            if Demo.isOn { Demo.open(UserDefaults.standard.string(forKey: "demoScreen"), router: router) }
         }
         .task { await library.start() }
         // Warms the yt-dlp worker on something you're likely to play anyway.

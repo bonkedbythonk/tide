@@ -3,6 +3,8 @@ import SwiftUI
 struct PlayerBar: View {
     @Environment(Player.self) private var player
     @Environment(Router.self) private var router
+    @Environment(WallpaperStore.self) private var wallpaper
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         HStack(spacing: 16) {
@@ -14,7 +16,18 @@ struct PlayerBar: View {
         }
         .padding(.horizontal, 16)
         .frame(height: 76)
-        .background(.bar)
+        .background {
+            if wallpaper.isActive {
+                // Its slice of the wallpaper, under the same bar material.
+                ZStack {
+                    WallpaperBackground()
+                    Rectangle().fill(.bar)
+                }
+            } else {
+                Rectangle().fill(.bar)
+            }
+        }
+        .environment(\.colorScheme, wallpaper.isActive ? .dark : colorScheme)
         // Clicking anywhere on the bar that isn't a control opens or closes Now Playing.
         .contentShape(Rectangle())
         .onTapGesture {
@@ -252,6 +265,7 @@ struct SoundPopover: View {
 
 struct SidePanelView: View {
     @Environment(Router.self) private var router
+    @Environment(WallpaperStore.self) private var wallpaper
 
     var body: some View {
         @Bindable var router = router
@@ -268,6 +282,7 @@ struct SidePanelView: View {
             case .lyrics: LyricsView(fontSize: 20)
             }
         }
+        .background { if wallpaper.isActive { Rectangle().fill(.regularMaterial).ignoresSafeArea() } }
     }
 }
 
@@ -499,6 +514,17 @@ struct NowPlayingView: View {
                         }
                         .transition(.opacity.combined(with: .offset(y: 8)))
                     }
+                    .padding(wallpaper.isActive ? 14 : 0)
+                    // Over a sharp wallpaper the queue and lyrics get a solid glass panel,
+                    // so the picture never wins over the text.
+                    .background {
+                        if wallpaper.isActive {
+                            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                .fill(.regularMaterial)
+                                .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                    .strokeBorder(.white.opacity(0.08)))
+                        }
+                    }
                     .frame(maxWidth: .infinity)
                     .animation(.snappy(duration: 0.25), value: router.panelTab)
                     .offset(y: appeared ? 0 : 30)
@@ -547,7 +573,9 @@ struct NowPlayingQueue: View {
             LazyVStack(alignment: .leading, spacing: 2) {
                 if let s = player.current {
                     Text("Now Playing").font(.headline).foregroundStyle(.secondary).padding(.horizontal, 8)
-                    QueueRow(song: s, current: true).padding(8)
+                    QueueRow(song: s, current: true)
+                        .padding(8)
+                        .background(RoundedRectangle(cornerRadius: 8).fill(Color.accentColor.opacity(0.18)))
                 }
                 Text("Up Next").font(.headline).foregroundStyle(.secondary).padding(.horizontal, 8).padding(.top, 12)
                 if player.upNext.isEmpty {

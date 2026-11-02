@@ -10,6 +10,12 @@ struct MusicSampleApp: App {
     @State private var lyrics = LyricsStore()
     @State private var wallpaper = WallpaperStore()
 
+    /// ⌘1–⌘9: the fixed sections, then your playlists in sidebar order.
+    private var goTargets: [(String, Route)] {
+        [("Home", .home), ("Search", .search), ("Liked Songs", .liked), ("Saved Albums", .savedAlbums)]
+            + library.playlists.map { ($0.title, Route.page($0.id)) }
+    }
+
     init() {
         NSApplication.shared.setActivationPolicy(.regular)
         _ = ResponsiveScrollingPatch.applyOnce
@@ -33,7 +39,7 @@ struct MusicSampleApp: App {
         }
         .commands {
             CommandMenu("Playback") {
-                // Space is handled by SpaceToPlay, so typing a space in a text field still works.
+                // Space and the other single keys are handled by KeyboardShortcuts (press ?).
                 Button(player.isPlaying ? "Pause  (Space)" : "Play  (Space)") { player.toggle() }
                 Button("Next Song") { player.next() }
                     .keyboardShortcut(.rightArrow, modifiers: .command)
@@ -51,9 +57,17 @@ struct MusicSampleApp: App {
                 Button("Up Next") { router.togglePanel(.queue) }
                     .keyboardShortcut("u", modifiers: [.command, .shift])
             }
-            CommandGroup(after: .sidebar) {
+            CommandMenu("Go") {
                 Button("Back") { router.goBack() }.keyboardShortcut("[", modifiers: .command)
                 Button("Forward") { router.goForward() }.keyboardShortcut("]", modifiers: .command)
+                Divider()
+                ForEach(Array(goTargets.prefix(9).enumerated()), id: \.offset) { i, target in
+                    Button(target.0) { router.go(target.1) }
+                        .keyboardShortcut(KeyEquivalent(Character(String(i + 1))), modifiers: .command)
+                }
+                Divider()
+                Button("Search…") { router.go(.search) }.keyboardShortcut("k", modifiers: .command)
+                Button("Keyboard Shortcuts") { router.showShortcuts.toggle() }
             }
         }
     }
@@ -65,6 +79,7 @@ struct RootView: View {
     @Environment(LyricsStore.self) private var lyrics
     @Environment(WallpaperStore.self) private var wallpaper
     @Environment(\.colorScheme) private var colorScheme
+    @State private var canvasSize = CGSize.zero
     @Environment(Router.self) private var router
     @State private var swipe = SwipeTracker()
 
@@ -73,6 +88,17 @@ struct RootView: View {
             NavigationSplitView {
                 SidebarView()
                     .navigationSplitViewColumnWidth(min: 200, ideal: 230, max: 300)
+                    // The sidebar shows its slice of the wallpaper through a light material.
+                    .background {
+                        if wallpaper.isActive {
+                            ZStack {
+                                WallpaperBackground()
+                                Rectangle().fill(.ultraThinMaterial)
+                            }
+                            .ignoresSafeArea()
+                        }
+                    }
+                    .environment(\.colorScheme, wallpaper.isActive ? .dark : colorScheme)
             } detail: {
                 ZStack {
                     WallpaperBackground()
@@ -107,6 +133,15 @@ struct RootView: View {
             Divider()
             PlayerBar()
         }
+        .background {
+            // Reports the window's size so every wallpaper slice lines up.
+            GeometryReader { proxy in
+                Color.clear.preference(key: CanvasSizeKey.self, value: proxy.size)
+            }
+            .ignoresSafeArea()
+        }
+        .onPreferenceChange(CanvasSizeKey.self) { canvasSize = $0 }
+        .environment(\.wallpaperCanvas, canvasSize)
         .overlay(alignment: .bottomTrailing) {
             if player.videoMode, player.current != nil, !router.showNowPlaying, !router.videoFullscreen,
                !router.miniPlayerHidden {
@@ -136,9 +171,12 @@ struct RootView: View {
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
+        .sheet(isPresented: Binding(get: { router.showShortcuts }, set: { router.showShortcuts = $0 })) {
+            ShortcutsSheet()
+        }
         .onAppear {
             swipe.install(router: router, player: player)
-            SpaceToPlay.install(player: player)
+            KeyboardShortcuts.install(player: player, router: router)
         }
         .task { await library.start() }
         // Warms the yt-dlp worker on something you're likely to play anyway.
@@ -202,4 +240,32 @@ struct DetailView: View {
         case .page(let id): library.pages[id]?.title ?? ""
         }
     }
+}
+
+struct ShortcutsSheet: View {
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Keyboard shortcuts").font(.title2.bold())
+            Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 7) {
+                ForEach(KeyboardShortcuts.list, id: \.0) { keys, action in
+                    GridRow {
+                        Text(keys).font(.system(.body, design: .rounded).weight(.semibold)).monospacedDigit()
+                        Text(action).foregroundStyle(.secondary)
+                    }
+                }
+            }
+            Text("Single keys don't fire while you're typing in a field.")
+                .font(.caption).foregroundStyle(.tertiary)
+            HStack { Spacer(); Button("Done") { dismiss() }.keyboardShortcut(.defaultAction) }
+        }
+        .padding(22)
+        .frame(width: 440)
+    }
+}
+
+private struct CanvasSizeKey: PreferenceKey {
+    static let defaultValue = CGSize.zero
+    static func reduce(value: inout CGSize, nextValue: () -> CGSize) { value = nextValue() }
 }

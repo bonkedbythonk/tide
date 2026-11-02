@@ -37,6 +37,7 @@ enum SleepTimer: String, CaseIterable, Identifiable {
         didSet { applyVolume(); Prefs.set(volume, "volume") }
     }
     var shuffle = Prefs.bool("shuffle") { didSet { Prefs.set(shuffle, "shuffle") } }
+    var isMuted = false { didSet { engine.set("mute", isMuted ? "yes" : "no") } }
     var repeatMode = RepeatMode(rawValue: Prefs.string("repeat") ?? "") ?? .off {
         didSet { Prefs.set(repeatMode.rawValue, "repeat") }
     }
@@ -84,8 +85,6 @@ enum SleepTimer: String, CaseIterable, Identifiable {
     /// The new track fades in once mpv reports it actually playing: mpv may set up a
     /// fresh audio output for it, which would start at full volume and skip the fade.
     @ObservationIgnored private var fadeInWhenPlaying = false
-    /// A switch waits for the old track's fade-out to finish before loading the new one.
-    @ObservationIgnored private var fadeOutEnds = Date.distantPast
     /// Between loadfile and mpv's "file loaded", position and length reports still
     /// belong to the previous track; they're ignored so the bar doesn't jump.
     @ObservationIgnored private var awaitingFile = false
@@ -142,13 +141,6 @@ enum SleepTimer: String, CaseIterable, Identifiable {
         let token = loadToken
         let fadeIn = smoothTransitions && !advancingNaturally
         advancingNaturally = false
-        // Fade out what's playing while the next track resolves.
-        if isPlaying, !isLoading, smoothTransitions {
-            fadeOutEnds = Date().addingTimeInterval(0.2)
-            fade(to: 0, over: 0.2) { [weak self] in
-                if self?.isLoading == true { self?.engine.set("pause", "yes") }
-            }
-        }
         isLoading = true
         isPlaying = autoplay
         position = start
@@ -161,9 +153,16 @@ enum SleepTimer: String, CaseIterable, Identifiable {
             guard let self else { return }
             do {
                 let streams = try await self.resolver.resolve(song.id, video: video, maxHeight: height)
-                let wait = max(streams.availableAt.timeIntervalSinceNow + 0.2, self.fadeOutEnds.timeIntervalSinceNow)
+                let wait = streams.availableAt.timeIntervalSinceNow + 0.2
                 if wait > 0 { try await Task.sleep(for: .seconds(wait)) }
                 guard token == self.loadToken else { return }
+                // The previous track kept playing while this one resolved; fade it out
+                // only now that the new one is ready.
+                if self.smoothTransitions, self.fadeLevel > 0.05 {
+                    self.fade(to: 0, over: 0.2)
+                    try await Task.sleep(for: .milliseconds(220))
+                    guard token == self.loadToken else { return }
+                }
                 self.currentGain = streams.gainDb
                 self.fadeTimer?.invalidate()
                 self.fadeLevel = fadeIn ? 0 : 1
@@ -182,6 +181,7 @@ enum SleepTimer: String, CaseIterable, Identifiable {
                 await self.resolver.prefetch(self.upNext.prefix(10).map(\.id), video: video, maxHeight: height)
             } catch {
                 guard token == self.loadToken else { return }
+                self.fade(to: 0, over: 0.2) { [weak self] in self?.engine.set("pause", "yes") }
                 self.isLoading = false
                 self.isPlaying = false
                 self.lastError = error.localizedDescription
@@ -317,6 +317,8 @@ enum SleepTimer: String, CaseIterable, Identifiable {
         publishNowPlaying()
     }
 
+    func toggleMute() { isMuted.toggle() }
+
     func cycleRepeat() {
         repeatMode = switch repeatMode {
         case .off: .all
@@ -408,6 +410,7 @@ enum SleepTimer: String, CaseIterable, Identifiable {
     var panelTab = PanelTab.queue
 
     var videoFullscreen = false
+    var showShortcuts = false
     /// The floating video in the corner was closed for the current video session.
     var miniPlayerHidden = false
 
@@ -531,19 +534,56 @@ enum ClickToPlay {
     }
 }
 
-/// Space plays and pauses anywhere in the app, except while typing in a text field
-/// (search, filter, the playlist picker).
-enum SpaceToPlay {
+/// Single-key shortcuts, like anicat's: they work anywhere except while typing
+/// in a text field. Up/down stay with a focused list or table.
+enum KeyboardShortcuts {
     private static var monitor: Any?
 
-    static func install(player: Player) {
+    static func install(player: Player, router: Router) {
         guard monitor == nil else { return }
         monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-            guard event.keyCode == 49,
-                  event.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty,
-                  !(event.window?.firstResponder is NSText) else { return event }
-            player.toggle()
-            return nil
+            handle(event, player: player, router: router) ? nil : event
         }
     }
+
+    private static func handle(_ event: NSEvent, player: Player, router: Router) -> Bool {
+        let mods = event.modifierFlags.intersection([.command, .option, .control, .shift])
+        let responder = event.window?.firstResponder
+        // Option-arrows go back and forward, like a browser.
+        if mods == .option, event.keyCode == 123 { router.goBack(); return true }
+        if mods == .option, event.keyCode == 124 { router.goForward(); return true }
+        guard mods.isEmpty || mods == .shift, !(responder is NSText), event.window?.sheetParent == nil else { return false }
+        let inList = responder is NSTableView
+        switch event.keyCode {
+        case 49: player.toggle(); return true                                   // space
+        case 123: player.seek(max(0, player.position - 5)); return true         // left
+        case 124: player.seek(min(player.length, player.position + 5)); return true // right
+        case 126 where !inList: player.volume = min(1, player.volume + 0.05); return true // up
+        case 125 where !inList: player.volume = max(0, player.volume - 0.05); return true // down
+        default: break
+        }
+        switch event.charactersIgnoringModifiers ?? "" {
+        case "?": withAnimation(.snappy) { router.showShortcuts.toggle() }
+        case "m": player.toggleMute()
+        case "s": player.shuffle.toggle()
+        case "r": player.cycleRepeat()
+        case "v": if player.current != nil { player.videoMode.toggle() }
+        case "f": if player.videoMode { router.videoFullscreen ? router.exitVideoFullscreen() : router.enterVideoFullscreen() }
+        case "n": if player.current != nil { withAnimation(.spring(duration: 0.45, bounce: 0.12)) { router.showNowPlaying.toggle() } }
+        case "l": router.togglePanel(.lyrics)
+        case "q": router.togglePanel(.queue)
+        case "/": router.go(.search)
+        default: return false
+        }
+        return true
+    }
+
+    static let list: [(String, String)] = [
+        ("Space", "Play / pause"), ("← →", "Back / forward 5 seconds"), ("↑ ↓", "Volume"),
+        ("⌘← ⌘→", "Previous / next song"), ("M", "Mute"), ("S", "Shuffle"), ("R", "Repeat"),
+        ("V", "Song / music video"), ("F", "Fullscreen video"), ("N", "Now Playing"),
+        ("L", "Lyrics"), ("Q", "Up Next"), ("⌘L", "Like"),
+        ("⌘1 – ⌘9", "Home, Search, Liked, Albums, playlists"), ("⌘K or /", "Search"),
+        ("⌘[ ⌘]  or  ⌥← ⌥→", "Back / forward"), ("⌘,", "Settings"), ("?", "This list"),
+    ]
 }

@@ -182,27 +182,47 @@ import SwiftUI
     }
 }
 
-/// The wallpaper layer: the image filling the area, blurred and dimmed per settings,
-/// crossfading when it changes. `sharp` shows it with no blur (Now Playing).
+/// Size of the whole window's content, so each area can show its own slice of one
+/// wallpaper and the sidebar, content and player bar line up as one picture.
+struct WallpaperCanvasKey: EnvironmentKey {
+    static let defaultValue: CGSize = .zero
+}
+
+extension EnvironmentValues {
+    var wallpaperCanvas: CGSize {
+        get { self[WallpaperCanvasKey.self] }
+        set { self[WallpaperCanvasKey.self] = newValue }
+    }
+}
+
+/// The wallpaper layer: blurred and dimmed per settings, crossfading when it changes.
+/// It draws the slice of a window-sized picture that sits under this view.
+/// `sharp` shows it with no blur (Now Playing).
 struct WallpaperBackground: View {
     @Environment(WallpaperStore.self) private var wallpaper
+    @Environment(\.wallpaperCanvas) private var canvas
     var sharp = false
 
     var body: some View {
-        ZStack {
+        GeometryReader { proxy in
+            let frame = proxy.frame(in: .global)
+            let size = canvas == .zero ? proxy.size : canvas
             if let image = wallpaper.image {
                 Image(nsImage: image)
                     .resizable()
                     .aspectRatio(contentMode: .fill)
+                    .frame(width: size.width, height: size.height)
+                    .clipped()
                     .blur(radius: sharp && wallpaper.source != .coverArt ? 0 : wallpaper.blur, opaque: true)
                     .saturation(wallpaper.blur > 40 ? 1.3 : 1)
                     .overlay(Color.black.opacity(sharp ? 0.15 : wallpaper.dim))
+                    .offset(x: canvas == .zero ? 0 : -frame.minX, y: canvas == .zero ? 0 : -frame.minY)
                     .id(wallpaper.imageID)
                     .transition(.opacity)
             }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .clipped()
+        .ignoresSafeArea()
         .allowsHitTesting(false)
     }
 }

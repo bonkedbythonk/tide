@@ -464,6 +464,7 @@ enum SleepTimer: String, CaseIterable, Identifiable {
     var showShortcuts = false
     /// Bumped by / and ⌘K so the search field takes focus even when Search is already open.
     var searchFocusRequest = 0
+    var showPalette = false
     /// The floating video in the corner was closed for the current video session.
     var miniPlayerHidden = false
 
@@ -641,7 +642,7 @@ enum KeyboardShortcuts {
         ("⌘← ⌘→", "Previous / next song"), ("M", "Mute"), ("S", "Shuffle"), ("R", "Repeat"),
         ("V", "Song / music video"), ("F", "Fullscreen video"), ("N", "Now Playing"),
         ("L", "Lyrics"), ("Q", "Up Next"), ("⌘L", "Like"),
-        ("⌘1 – ⌘9", "Home, Search, Liked, Albums, playlists"), ("⌘K or /", "Search"),
+        ("⌘1 – ⌘9", "Home, Search, Liked, Albums, playlists"), ("/", "Search"), ("⌘K", "Command palette"),
         ("⌘[ ⌘]  or  ⌥← ⌥→", "Back / forward"), ("⌘,", "Settings"), ("?", "This list"),
     ]
 }

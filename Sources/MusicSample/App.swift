@@ -69,7 +69,9 @@ struct MusicSampleApp: App {
                         .keyboardShortcut(KeyEquivalent(Character(String(i + 1))), modifiers: .command)
                 }
                 Divider()
-                Button("Search…") { router.openSearch() }.keyboardShortcut("k", modifiers: .command)
+                Button("Search…") { router.openSearch() }
+                Button("Command Palette…") { withAnimation(.snappy(duration: 0.2)) { router.showPalette.toggle() } }
+                    .keyboardShortcut("k", modifiers: .command)
                 Button("Keyboard Shortcuts") { router.showShortcuts.toggle() }
             }
         }
@@ -192,6 +194,11 @@ struct RootView: View {
                     .shadow(color: .black.opacity(0.15), radius: 8, y: 2)
                     .padding(.bottom, 96)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
+        .overlay {
+            if router.showPalette {
+                CommandPalette().transition(.opacity)
             }
         }
         .sheet(isPresented: Binding(get: { router.showShortcuts }, set: { router.showShortcuts = $0 })) {

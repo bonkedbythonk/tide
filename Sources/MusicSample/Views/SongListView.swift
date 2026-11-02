@@ -55,10 +55,9 @@ struct SongListView: View {
     private var items: [SongRowItem] {
         var seen = Set<String>()
         let base = songs.filter { seen.insert($0.id).inserted }.enumerated().map { SongRowItem(number: $0 + 1, song: $1) }
-        let filtered = filter.isEmpty ? base : base.filter {
-            $0.title.localizedCaseInsensitiveContains(filter)
-                || $0.artist.localizedCaseInsensitiveContains(filter)
-                || $0.album.localizedCaseInsensitiveContains(filter)
+        let query = Fuzzy.words(filter)
+        let filtered = query.isEmpty ? base : base.filter {
+            Fuzzy.score(query, in: "\($0.title) \($0.artist) \($0.album)") > 0
         }
         return filtered.sorted(using: sortOrder)
     }

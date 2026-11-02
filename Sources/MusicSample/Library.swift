@@ -168,6 +168,7 @@ import SwiftUI
 
     private func remember(_ s: Song) { songIndex[s.id] = s }
     func song(_ id: String) -> Song? { songIndex[id] }
+    var knownSongs: Dictionary<String, Song>.Values { songIndex.values }
     func songs(_ ids: [String]) -> [Song] { ids.compactMap { songIndex[$0] } }
     func playlist(_ id: String) -> MediaItem? { playlists.first { $0.id == id } }
 

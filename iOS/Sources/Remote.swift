@@ -91,8 +91,13 @@ import UIKit
     }
 
     private func connect(_ results: Set<NWBrowser.Result>) {
-        guard link == nil, let result = results.first(where: { Self.name(of: $0) == macName }) ?? results.first,
+        guard !connected, let result = results.first(where: { Self.name(of: $0) == macName }) ?? results.first,
               let name = Self.name(of: result) else { return }
+        // An attempt at a Mac that has since quit can wait forever; the fresh result replaces it.
+        if let pending = link {
+            link = nil
+            pending.cancel()
+        }
         let link = LinkConnection(NWConnection(to: result.endpoint, using: LinkConnection.parameters))
         link.onReady = { [weak self, unowned link] in
             guard let self else { return }

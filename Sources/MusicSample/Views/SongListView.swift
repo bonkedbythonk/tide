@@ -156,6 +156,7 @@ struct SongListView: View {
                 ClickToPlay.arm { play(s, visibleSongs, suggestedSongs) }
             }
             .scrollContentBackground(.hidden)
+            .alternatingRowBackgrounds(.disabled)
             // Over a wallpaper the list sits on a material: never text straight on a picture.
             .background {
                 if wallpaper.isActive {

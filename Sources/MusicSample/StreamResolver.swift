@@ -64,8 +64,8 @@ actor StreamResolver {
     private var prefetchQueue: [(id: String, video: Bool, maxHeight: Int)] = []
     private var prefetchesRunning = 0
 
-    /// Resolves songs in the background, two at a time, so a long queue doesn't
-    /// start a crowd of yt-dlp processes at once. Newer requests go first.
+    /// Resolves songs in the background, one at a time: YouTube starts asking "are
+    /// you a bot" when too many requests come from one place. Newer requests go first.
     func prefetch(_ videoIds: [String], video: Bool, maxHeight: Int) {
         let fresh = videoIds.filter { id in
             let key = id + (video ? "#v\(maxHeight)" : "#a")
@@ -73,11 +73,12 @@ actor StreamResolver {
             return !cached && inFlight[key] == nil && !prefetchQueue.contains { $0.id == id && $0.video == video }
         }
         prefetchQueue.insert(contentsOf: fresh.map { ($0, video, maxHeight) }, at: 0)
+        if prefetchQueue.count > 6 { prefetchQueue.removeLast(prefetchQueue.count - 6) }
         pumpPrefetch()
     }
 
     private func pumpPrefetch() {
-        while prefetchesRunning < 2, !prefetchQueue.isEmpty {
+        while prefetchesRunning < 1, !prefetchQueue.isEmpty {
             let next = prefetchQueue.removeFirst()
             prefetchesRunning += 1
             Task {

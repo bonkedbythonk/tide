@@ -1,11 +1,33 @@
 import AppKit
 import SwiftUI
 
-/// Shows mpv's video layer. There is one layer for the whole app, so the
-/// surface that is `active` takes it (Now Playing, or fullscreen on top).
-struct VideoSurface: NSViewRepresentable {
+enum VideoHost { case fullscreen, nowPlaying, mini }
+
+/// Shows mpv's video layer. There is one layer for the whole app, so exactly one
+/// place owns it at a time: fullscreen, else Now Playing, else the mini player.
+/// Places that appear and disappear together (Now Playing closing while the mini
+/// player opens) used to both grab it, and the one being removed could win and take
+/// the picture with it: black video.
+struct VideoSurface: View {
     @Environment(Player.self) private var player
-    var active = true
+    @Environment(Router.self) private var router
+    let role: VideoHost
+
+    private var owner: VideoHost? {
+        guard player.videoMode else { return nil }
+        if router.videoFullscreen { return .fullscreen }
+        if router.showNowPlaying { return .nowPlaying }
+        return router.miniPlayerHidden ? nil : .mini
+    }
+
+    var body: some View {
+        VideoHostView(video: player.engine.videoView, owns: owner == role)
+    }
+}
+
+private struct VideoHostView: NSViewRepresentable {
+    let video: MpvMetalView
+    let owns: Bool
 
     func makeNSView(context: Context) -> NSView {
         let host = NSView()
@@ -15,8 +37,7 @@ struct VideoSurface: NSViewRepresentable {
     }
 
     func updateNSView(_ host: NSView, context: Context) {
-        let video = player.engine.videoView
-        guard active, video.superview !== host else { return }
+        guard owns, video.superview !== host else { return }
         video.removeFromSuperview()
         video.frame = host.bounds
         video.autoresizingMask = [.width, .height]
@@ -38,7 +59,7 @@ struct AmbientVideo: View {
                     .blur(radius: 50)
                     .opacity(0.7)
             }
-            VideoSurface(active: !router.videoFullscreen)
+            VideoSurface(role: .nowPlaying)
                 .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             if player.isLoading { ProgressView().controlSize(.large) }
         }
@@ -61,7 +82,7 @@ struct VideoFullscreenView: View {
         ZStack {
             Color.black
             if let s = player.current {
-                VideoSurface()
+                VideoSurface(role: .fullscreen)
                 // The video layer is AppKit; clicks are caught by this layer above it.
                 Color.clear
                     .contentShape(Rectangle())
@@ -215,7 +236,7 @@ struct VideoMiniPlayer: View {
 
     var body: some View {
         ZStack {
-            VideoSurface(active: true)
+            VideoSurface(role: .mini)
             if player.isLoading { ProgressView() }
             // Clicks land on this layer; the video itself is AppKit.
             Color.clear

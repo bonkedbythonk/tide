@@ -548,6 +548,8 @@ struct NowPlayingView: View {
         }
         .onAppear {
             withAnimation(.spring(duration: 0.55, bounce: 0.2).delay(0.05)) { appeared = true }
+            // The Video switch lives here; start fetching the video now so it's quick.
+            if let s = player.current, !player.videoMode { player.prefetch(s, video: true) }
         }
         .onChange(of: hasLyrics, initial: true) { _, has in
             guard let has else { return }

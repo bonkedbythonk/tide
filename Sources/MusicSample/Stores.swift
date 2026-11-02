@@ -59,7 +59,7 @@ enum SleepTimer: String, CaseIterable, Identifiable {
     var videoMode = false {
         didSet {
             guard oldValue != videoMode, !settingVideoForNewQueue, current != nil else { return }
-            load(at: position, autoplay: isPlaying)
+            load(at: position, autoplay: isPlaying, followLive: true)
         }
     }
 
@@ -68,7 +68,7 @@ enum SleepTimer: String, CaseIterable, Identifiable {
         didSet {
             Prefs.set(videoQuality, "videoQuality")
             guard oldValue != videoQuality, videoMode, current != nil else { return }
-            load(at: position, autoplay: isPlaying)
+            load(at: position, autoplay: isPlaying, followLive: true)
         }
     }
 
@@ -88,6 +88,8 @@ enum SleepTimer: String, CaseIterable, Identifiable {
     /// Between loadfile and mpv's "file loaded", position and length reports still
     /// belong to the previous track; they're ignored so the bar doesn't jump.
     @ObservationIgnored private var awaitingFile = false
+    /// mpv's real position, kept up to date even while another load is resolving.
+    @ObservationIgnored private var livePosition: TimeInterval = 0
     @ObservationIgnored private let resolver = StreamResolver()
     @ObservationIgnored private var nowPlaying: NowPlayingCenter?
     @ObservationIgnored private var loadToken = 0
@@ -102,7 +104,9 @@ enum SleepTimer: String, CaseIterable, Identifiable {
     init() {
         engine.onFileLoaded = { [weak self] in self?.awaitingFile = false }
         engine.onTime = { [weak self] t in
-            guard let self, !self.isLoading, !self.awaitingFile else { return }
+            guard let self, !self.awaitingFile else { return }
+            self.livePosition = t
+            guard !self.isLoading else { return }
             self.position = t
             if self.fadeInWhenPlaying {
                 self.fadeInWhenPlaying = false
@@ -132,7 +136,10 @@ enum SleepTimer: String, CaseIterable, Identifiable {
 
     /// Resolves the current track's streams (cached or prefetched when possible)
     /// and hands them to mpv. A newer load cancels an older one still resolving.
-    private func load(at start: TimeInterval = 0, autoplay: Bool = true) {
+    /// `followLive`: the same track as another kind (song to video, a new quality).
+    /// It keeps playing while the new streams load, so the switch picks up from
+    /// wherever it has got to by then instead of jumping back.
+    private func load(at start: TimeInterval = 0, autoplay: Bool = true, followLive: Bool = false) {
         guard let song = current else {
             engine.stop()
             return
@@ -175,16 +182,22 @@ enum SleepTimer: String, CaseIterable, Identifiable {
                 }
                 self.fadeInWhenPlaying = fadeIn
                 self.awaitingFile = true
-                self.engine.load(audio: streams.audio, video: streams.video, start: start, paused: !autoplay,
+                let begin = followLive ? self.livePosition + 0.2 : start
+                self.position = begin
+                self.engine.load(audio: streams.audio, video: streams.video, start: begin, paused: !autoplay,
                                  gainDb: self.matchLoudness ? streams.gainDb : 0)
                 self.isLoading = false
-                await self.resolver.prefetch(self.upNext.prefix(10).map(\.id), video: video, maxHeight: height)
+                await self.resolver.prefetch(self.upNext.prefix(3).map(\.id), video: video, maxHeight: height)
             } catch {
                 guard token == self.loadToken else { return }
                 self.fade(to: 0, over: 0.2) { [weak self] in self?.engine.set("pause", "yes") }
                 self.isLoading = false
                 self.isPlaying = false
-                self.lastError = error.localizedDescription
+                let message = error.localizedDescription
+                // YouTube's answer when it decides there were too many requests from here.
+                self.lastError = message.contains("not a bot")
+                    ? "YouTube is asking to confirm you're not a bot. Try again in a while."
+                    : message
             }
         }
     }

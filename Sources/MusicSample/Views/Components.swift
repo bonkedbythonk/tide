@@ -252,7 +252,7 @@ struct SongTile: View {
         .task(id: hovering) {
             // Resting on a row for a moment starts resolving it (your snappy plugin's idea).
             guard hovering else { return }
-            try? await Task.sleep(for: .milliseconds(250))
+            try? await Task.sleep(for: .milliseconds(500))
             if !Task.isCancelled { player.prefetch(song) }
         }
         .onTapGesture { player.play(song, in: context) }
@@ -314,7 +314,7 @@ struct MediaCard: View {
         .stableHover { hovering = $0 }
         .task(id: hovering) {
             guard hovering, let prefetch else { return }
-            try? await Task.sleep(for: .milliseconds(250))
+            try? await Task.sleep(for: .milliseconds(500))
             if !Task.isCancelled { prefetch() }
         }
         .onTapGesture(perform: open)
@@ -345,7 +345,7 @@ struct OnDwell: ViewModifier {
             .stableHover { hovering = $0 }
             .task(id: hovering) {
                 guard hovering else { return }
-                try? await Task.sleep(for: .milliseconds(250))
+                try? await Task.sleep(for: .milliseconds(500))
                 if !Task.isCancelled { action() }
             }
     }

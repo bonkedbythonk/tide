@@ -130,7 +130,9 @@ struct RootView: View {
                 }
             }
             .toolbar(router.videoFullscreen ? .hidden : .automatic, for: .windowToolbar)
-            Divider()
+            // No seam lines over a wallpaper: they read as harsh black cuts through the picture.
+            .toolbarBackgroundVisibility(wallpaper.isActive ? .hidden : .automatic, for: .windowToolbar)
+            if !wallpaper.isActive { Divider() }
             PlayerBar()
         }
         .background {
@@ -141,6 +143,11 @@ struct RootView: View {
             .ignoresSafeArea()
         }
         .onPreferenceChange(CanvasSizeKey.self) { canvasSize = $0 }
+        .onChange(of: wallpaper.isActive, initial: true) { _, on in
+            SplitDividerPatch.hidden = on
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { SplitDividerPatch.apply() }
+        }
+        .onChange(of: canvasSize) { SplitDividerPatch.apply() }
         .environment(\.wallpaperCanvas, canvasSize)
         .overlay(alignment: .bottomTrailing) {
             if player.videoMode, player.current != nil, !router.showNowPlaying, !router.videoFullscreen,
@@ -268,4 +275,25 @@ struct ShortcutsSheet: View {
 private struct CanvasSizeKey: PreferenceKey {
     static let defaultValue = CGSize.zero
     static func reduce(value: inout CGSize, nextValue: () -> CGSize) { value = nextValue() }
+}
+
+/// The line between sidebar and content is a 1-pixel vibrancy strip inside AppKit's
+/// split divider view; SwiftUI has no setting for it. Hidden over a wallpaper,
+/// where it reads as a black seam; untouched otherwise.
+enum SplitDividerPatch {
+    static var hidden = false {
+        didSet { apply() }
+    }
+
+    static func apply() {
+        for window in NSApp.windows { walk(window.contentView?.superview) }
+    }
+
+    private static func walk(_ view: NSView?) {
+        guard let view else { return }
+        if String(describing: type(of: view)).contains("SplitDividerView") {
+            view.subviews.forEach { $0.isHidden = hidden }
+        }
+        view.subviews.forEach(walk)
+    }
 }

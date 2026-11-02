@@ -81,6 +81,11 @@ enum SleepTimer: String, CaseIterable, Identifiable {
     @ObservationIgnored private var fadeTimer: Timer?
     /// The track ended by itself; the next one starts at full volume, no fade-in.
     @ObservationIgnored private var advancingNaturally = false
+    /// The new track fades in once mpv reports it actually playing: mpv may set up a
+    /// fresh audio output for it, which would start at full volume and skip the fade.
+    @ObservationIgnored private var fadeInWhenPlaying = false
+    /// A switch waits for the old track's fade-out to finish before loading the new one.
+    @ObservationIgnored private var fadeOutEnds = Date.distantPast
     @ObservationIgnored private let resolver = StreamResolver()
     @ObservationIgnored private var nowPlaying: NowPlayingCenter?
     @ObservationIgnored private var loadToken = 0
@@ -96,6 +101,12 @@ enum SleepTimer: String, CaseIterable, Identifiable {
         engine.onTime = { [weak self] t in
             guard let self, !self.isLoading else { return }
             self.position = t
+            if self.fadeInWhenPlaying {
+                self.fadeInWhenPlaying = false
+                self.fadeLevel = 0
+                self.applyFade()
+                self.fade(to: 1, over: 0.4)
+            }
         }
         engine.onDuration = { [weak self] d in
             self?.duration = d
@@ -128,7 +139,8 @@ enum SleepTimer: String, CaseIterable, Identifiable {
         advancingNaturally = false
         // Fade out what's playing while the next track resolves.
         if isPlaying, !isLoading, smoothTransitions {
-            fade(to: 0, over: 0.3) { [weak self] in
+            fadeOutEnds = Date().addingTimeInterval(0.2)
+            fade(to: 0, over: 0.2) { [weak self] in
                 if self?.isLoading == true { self?.engine.set("pause", "yes") }
             }
         }
@@ -144,17 +156,23 @@ enum SleepTimer: String, CaseIterable, Identifiable {
             guard let self else { return }
             do {
                 let streams = try await self.resolver.resolve(song.id, video: video, maxHeight: height)
-                let wait = streams.availableAt.timeIntervalSinceNow
-                if wait > 0 { try await Task.sleep(for: .seconds(wait + 0.2)) }
+                let wait = max(streams.availableAt.timeIntervalSinceNow + 0.2, self.fadeOutEnds.timeIntervalSinceNow)
+                if wait > 0 { try await Task.sleep(for: .seconds(wait)) }
                 guard token == self.loadToken else { return }
                 self.currentGain = streams.gainDb
                 self.fadeTimer?.invalidate()
                 self.fadeLevel = fadeIn ? 0 : 1
-                self.applyVolume()
+                if fadeIn {
+                    // Silent on both levels until mpv reports the new track playing.
+                    _ = self.engine.trySet("ao-volume", "0")
+                    self.engine.set("volume", "0")
+                } else {
+                    self.applyVolume()
+                }
+                self.fadeInWhenPlaying = fadeIn
                 self.engine.load(audio: streams.audio, video: streams.video, start: start, paused: !autoplay,
                                  gainDb: self.matchLoudness ? streams.gainDb : 0)
                 self.isLoading = false
-                if fadeIn { self.fade(to: 1, over: 0.5) }
                 await self.resolver.prefetch(self.upNext.prefix(10).map(\.id), video: video, maxHeight: height)
             } catch {
                 guard token == self.loadToken else { return }
@@ -214,9 +232,9 @@ enum SleepTimer: String, CaseIterable, Identifiable {
                 applyVolume()
             }
             engine.set("pause", "no")
-            fade(to: 1, over: 0.35)
+            fade(to: 1, over: 0.2)
         } else {
-            fade(to: 0, over: 0.3) { [weak self] in
+            fade(to: 0, over: 0.15) { [weak self] in
                 guard let self, !self.isPlaying else { return }
                 self.engine.set("pause", "yes")
             }
@@ -245,9 +263,9 @@ enum SleepTimer: String, CaseIterable, Identifiable {
         guard !queue.isEmpty else { return }
         if position > 3 || index == 0 {
             // Rewind to the start: fade out, jump, fade back in.
-            fade(to: 0, over: 0.2) { [weak self] in
+            fade(to: 0, over: 0.15) { [weak self] in
                 self?.seek(0)
-                self?.fade(to: 1, over: 0.4)
+                self?.fade(to: 1, over: 0.3)
             }
         } else {
             skipForward = false
@@ -333,7 +351,8 @@ enum SleepTimer: String, CaseIterable, Identifiable {
     /// falls back to the normal volume.
     private func applyFade() {
         let level = volume * volume * 100
-        if engine.trySet("ao-volume", String(format: "%.1f", fadeLevel * 100)) {
+        let aoOK = engine.trySet("ao-volume", String(format: "%.1f", fadeLevel * 100))
+        if aoOK {
             engine.set("volume", String(format: "%.1f", level))
         } else {
             engine.set("volume", String(format: "%.1f", level * fadeLevel))

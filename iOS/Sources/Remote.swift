@@ -2,14 +2,15 @@ import Foundation
 import Network
 import UIKit
 
-/// Finds Tide on the Mac with Bonjour, mirrors what it plays, and decides where
-/// commands go: to the Mac, or to the phone's own player after a handoff.
+/// Finds Tide on the Mac (Bonjour at home, its Tailscale address away), mirrors
+/// what it plays, and decides where playback happens: on the Mac, controlled
+/// from here, or on the phone.
 @Observable final class Remote {
     enum Target { case mac, phone }
 
     var macName: String?
     var connected = false
-    var target = Target.mac
+    var target = Target.phone
     /// A handoff to the phone was asked for and hasn't arrived yet.
     var handingOff = false
     let local = LocalPlayer()
@@ -20,17 +21,11 @@ import UIKit
     @ObservationIgnored private var macStateAt = Date()
     @ObservationIgnored private var browser: NWBrowser?
     @ObservationIgnored private var link: LinkConnection?
+    @ObservationIgnored private var retrying = false
 
     init() {
         local.onChange = { [weak self] in self?.reportLocal() }
-        // The last state, so the app opens showing something before it finds the Mac.
-        if let data = try? Data(contentsOf: Self.snapshot),
-           let saved = try? JSONDecoder().decode(Snapshot.self, from: data) {
-            macName = saved.mac
-            macState = saved.state
-            macState.playing = false
-            macQueue = saved.queue
-        }
+        macName = UserDefaults.standard.string(forKey: "macName")
     }
 
     var state: LinkState { target == .phone ? local.state : macState }
@@ -43,6 +38,17 @@ import UIKit
         if target == .phone { return local.position }
         guard macState.playing else { return macState.position }
         return min(macState.duration, macState.position + date.timeIntervalSince(macStateAt))
+    }
+
+    /// A song picked in Home, Search or Library plays wherever playback is now.
+    func play(_ songs: [Song], at i: Int) {
+        let list = songs.map(\.link)
+        if target == .mac, connected {
+            link?.send(.command(.play(list, i)))
+        } else {
+            target = .phone
+            local.play(list, at: i)
+        }
     }
 
     func send(_ command: LinkCommand) {
@@ -71,8 +77,10 @@ import UIKit
     }
 
     func continueOnMac() {
-        guard connected, local.current != nil else { return }
-        link?.send(.handoff(local.handoff))
+        guard connected else { return }
+        if local.current != nil {
+            link?.send(.handoff(local.handoff))
+        }
         // Switched first, so the pause isn't reported back as something still to resume.
         target = .mac
         local.pause()
@@ -80,31 +88,64 @@ import UIKit
 
     // MARK: Connection
 
+    /// Hosts to try when Bonjour finds nothing: one typed in Settings, then the
+    /// Tailscale addresses the Mac sent last time.
+    private var savedHosts: [String] {
+        let typed = UserDefaults.standard.string(forKey: "macHost").map { [$0] } ?? []
+        return (typed + (UserDefaults.standard.stringArray(forKey: "macHosts") ?? [])).filter { !$0.isEmpty }
+    }
+
     /// Called when the app comes to the front; a no-op while connected.
     func start() {
         guard link == nil else { return }
         browser?.cancel()
         let browser = NWBrowser(for: .bonjour(type: Link.controlService, domain: nil), using: NWParameters())
-        browser.browseResultsChangedHandler = { [weak self] results, _ in self?.connect(results) }
+        browser.browseResultsChangedHandler = { [weak self] results, _ in self?.found(results) }
         browser.start(queue: .main)
         self.browser = browser
+        retry()
     }
 
-    private func connect(_ results: Set<NWBrowser.Result>) {
+    private func found(_ results: Set<NWBrowser.Result>) {
         guard !connected, let result = results.first(where: { Self.name(of: $0) == macName }) ?? results.first,
               let name = Self.name(of: result) else { return }
-        // An attempt at a Mac that has since quit can wait forever; the fresh result replaces it.
+        open(result.endpoint, name: name,
+             audio: .service(name: name, type: Link.audioService, domain: "local.", interface: nil))
+    }
+
+    /// Bonjour first; with nothing on this network, the saved address. Repeats
+    /// while disconnected, a small TCP attempt every few seconds.
+    private func retry() {
+        guard !retrying else { return }
+        retrying = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in
+            guard let self else { return }
+            self.retrying = false
+            guard !self.connected else { return }
+            if let results = self.browser?.browseResults, !results.isEmpty {
+                self.found(results)
+            } else if let host = self.savedHosts.first {
+                self.open(.hostPort(host: .init(host), port: .init(rawValue: Link.controlPort)!), name: self.macName ?? host,
+                          audio: .hostPort(host: .init(host), port: .init(rawValue: Link.audioPort)!))
+            }
+            self.retry()
+        }
+    }
+
+    private func open(_ endpoint: NWEndpoint, name: String, audio: NWEndpoint) {
+        // An attempt at a Mac that has since gone can wait forever; the new one replaces it.
         if let pending = link {
             link = nil
             pending.cancel()
         }
-        let link = LinkConnection(NWConnection(to: result.endpoint, using: LinkConnection.parameters))
+        let link = LinkConnection(NWConnection(to: endpoint, using: LinkConnection.parameters))
         link.onReady = { [weak self, unowned link] in
             guard let self else { return }
             self.connected = true
             self.macName = name
-            self.local.mac = name
-            link.send(.hello(name: UIDevice.current.name))
+            UserDefaults.standard.set(name, forKey: "macName")
+            self.local.endpoint = audio
+            link.send(.hello(name: UIDevice.current.name, hosts: []))
             self.reportLocal()
         }
         link.onMessage = { [weak self] in self?.handle($0) }
@@ -113,11 +154,8 @@ import UIKit
             self.link = nil
             self.connected = false
             self.handingOff = false
-            self.local.mac = nil
-            // Try again shortly: the Mac app may have restarted, or Wi-Fi blinked.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                if let results = self.browser?.browseResults { self.connect(results) }
-            }
+            self.local.endpoint = nil
+            if self.target == .mac { self.target = .phone }
         }
         self.link = link
         link.start()
@@ -129,14 +167,15 @@ import UIKit
 
     private func handle(_ message: LinkMessage) {
         switch message {
+        case .hello(_, let hosts):
+            if !hosts.isEmpty { UserDefaults.standard.set(hosts, forKey: "macHosts") }
         case .state(let state):
-            let newSong = state.song?.id != macState.song?.id
             macState = state
             macStateAt = .now
-            if newSong { save() }
+            // Nothing playing here: show the Mac, like Spotify shows the active device.
+            if local.current == nil, state.song != nil { target = .mac }
         case .queue(let queue):
             macQueue = queue
-            save()
         case .handoff(let handoff):
             handingOff = false
             target = .phone
@@ -145,7 +184,7 @@ import UIKit
         case .handoffRequest:
             // "Resume Here" on the Mac.
             if target == .phone { continueOnMac() }
-        case .hello, .command:
+        case .command:
             break
         }
     }
@@ -155,20 +194,10 @@ import UIKit
         guard target == .phone else { return }
         link?.send(.state(local.state))
     }
+}
 
-    // MARK: Snapshot
-
-    private struct Snapshot: Codable {
-        let mac: String?
-        let state: LinkState
-        let queue: LinkQueue
-    }
-
-    private static let snapshot = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-        .appendingPathComponent("last-state.json")
-
-    private func save() {
-        let data = try? JSONEncoder().encode(Snapshot(mac: macName, state: macState, queue: macQueue))
-        try? data?.write(to: Self.snapshot, options: .atomic)
+extension Song {
+    var link: LinkSong {
+        LinkSong(id: id, title: title, artist: artist, album: album, duration: duration, artwork: artwork)
     }
 }

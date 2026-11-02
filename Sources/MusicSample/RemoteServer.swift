@@ -21,14 +21,14 @@ import TideLink
     init(player: Player) {
         self.player = player
         let name = Host.current().localizedName ?? "Mac"
-        if let control = try? NWListener(using: LinkConnection.parameters) {
+        if let control = Self.listener(LinkConnection.parameters, Link.controlPort) {
             control.service = .init(name: name, type: Link.controlService)
             control.newConnectionHandler = { [weak self] in self?.accept($0) }
             listeners.append(control)
         }
         let tcp = NWParameters.tcp
         tcp.includePeerToPeer = true
-        if let audio = try? NWListener(using: tcp) {
+        if let audio = Self.listener(tcp, Link.audioPort) {
             audio.service = .init(name: name, type: Link.audioService)
             audio.newConnectionHandler = { [weak self] in self?.serveAudio($0) }
             listeners.append(audio)
@@ -36,6 +36,28 @@ import TideLink
         listeners.forEach { $0.start(queue: .main) }
         // Checked once a second, sent only when something changed.
         timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in self?.broadcast() }
+    }
+
+    /// On the fixed port when it's free, otherwise any (Bonjour still finds it).
+    private static func listener(_ params: NWParameters, _ port: UInt16) -> NWListener? {
+        (try? NWListener(using: params, on: NWEndpoint.Port(rawValue: port)!)) ?? (try? NWListener(using: params))
+    }
+
+    /// This Mac's Tailscale addresses (100.64.0.0/10), for the phone to use away from home.
+    private static var tailscaleHosts: [String] {
+        var hosts: [String] = []
+        var list: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&list) == 0 else { return [] }
+        defer { freeifaddrs(list) }
+        var next = list
+        while let a = next?.pointee {
+            next = a.ifa_next
+            guard let sa = a.ifa_addr, sa.pointee.sa_family == UInt8(AF_INET) else { continue }
+            let ip = sa.withMemoryRebound(to: sockaddr_in.self, capacity: 1) { UInt32(bigEndian: $0.pointee.sin_addr.s_addr) }
+            guard ip >> 22 == (100 << 2 | 1) else { continue }
+            hosts.append("\(ip >> 24).\(ip >> 16 & 255).\(ip >> 8 & 255).\(ip & 255)")
+        }
+        return hosts
     }
 
     /// "Resume Here": the phone pauses and sends back its queue and spot.
@@ -47,6 +69,7 @@ import TideLink
         let client = LinkConnection(connection)
         client.onReady = { [weak self, unowned client] in
             guard let self else { return }
+            client.send(.hello(name: Host.current().localizedName ?? "Mac", hosts: Self.tailscaleHosts))
             client.send(.state(self.state))
             client.send(.queue(self.queue))
         }
@@ -62,7 +85,7 @@ import TideLink
 
     private func handle(_ message: LinkMessage, from client: LinkConnection) {
         switch message {
-        case .hello(let name):
+        case .hello(let name, _):
             phoneName = name
         case .command(let command):
             switch command {
@@ -72,6 +95,7 @@ import TideLink
             case .seek(let t): player.seek(t)
             case .volume(let v): player.volume = min(1, max(0, v))
             case .jump(let i): player.jump(to: i)
+            case .play(let songs, let i): player.take(songs.map(Song.init), at: i, from: 0)
             }
             broadcast()
         case .state(let state):

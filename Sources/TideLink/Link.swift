@@ -10,6 +10,10 @@ import Network
 public enum Link {
     public static let controlService = "_tide._tcp"
     public static let audioService = "_tide-audio._tcp"
+    /// Fixed ports, so the phone can also reach the Mac by address where Bonjour
+    /// doesn't go, such as over Tailscale.
+    public static let controlPort: UInt16 = 47410
+    public static let audioPort: UInt16 = 47411
 }
 
 public struct LinkSong: Codable, Hashable, Identifiable, Sendable {
@@ -86,10 +90,13 @@ public enum LinkCommand: Codable, Sendable {
     case seek(TimeInterval)
     case volume(Double)
     case jump(Int)
+    /// A new queue, from the phone's Home, Search or Library.
+    case play([LinkSong], Int)
 }
 
 public enum LinkMessage: Codable, Sendable {
-    case hello(name: String)
+    /// `hosts`: the Mac's addresses for reaching it away from home (Tailscale).
+    case hello(name: String, hosts: [String])
     /// The sender's playback. The phone only sends it while it plays by itself.
     case state(LinkState)
     case queue(LinkQueue)

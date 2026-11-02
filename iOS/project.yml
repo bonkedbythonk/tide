@@ -6,7 +6,7 @@ name: Tide
 options:
   bundleIdPrefix: local.tide
   deploymentTarget:
-    iOS: "18.0"
+    iOS: "26.0"
   createIntermediateGroups: true
 
 targets:
@@ -16,6 +16,10 @@ targets:
     sources:
       - path: Sources
       - path: ../Sources/TideLink
+      # YouTube Music's API, its parsing and the library store, shared with the Mac app.
+      - path: ../Sources/MusicSample/YTMusic.swift
+      - path: ../Sources/MusicSample/Models.swift
+      - path: ../Sources/MusicSample/Library.swift
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: local.tide.ios

@@ -38,7 +38,9 @@ import SwiftUI
             state = .signedOut
             return
         }
+        #if os(macOS)
         StreamResolver.cookieFile = await YTClient.writeCookieFile()
+        #endif
         // Last session's library shows at once; the refresh below replaces it.
         if let snapshot = DiskCache.load(Snapshot.self, "library") {
             home = snapshot.home

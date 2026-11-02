@@ -76,7 +76,9 @@ final class YTClient {
         let cookieFile = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("MusicApp/cookies.txt")
         try? FileManager.default.removeItem(at: cookieFile)
+        #if os(macOS)
         StreamResolver.cookieFile = nil
+        #endif
         let records = await store.dataRecords(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes())
         await store.removeData(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(), for: records)
     }

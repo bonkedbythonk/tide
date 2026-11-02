@@ -2,27 +2,38 @@ import AVFoundation
 import MediaPlayer
 import Network
 
-/// Playback on the phone itself, after "Continue on iPhone". The audio comes from
-/// the Mac as an m4a file over the local network: the phone never asks YouTube
-/// for a stream, so nothing plays over cellular and no video is ever fetched.
+/// Playback on the phone. Audio comes from the Mac as an m4a file, over Wi-Fi at
+/// home or Tailscale away: the phone never resolves YouTube streams itself and
+/// never fetches video. Without the Mac it falls back to YouTube's embedded
+/// player, which only plays while Tide is open.
 @Observable final class LocalPlayer {
     var queue: [LinkSong] = []
     var index = 0
     var playing = false
     var loading = false
     var error: String?
-    var volume = 1.0 { didSet { player.volume = Float(volume) } }
+    /// Playing through YouTube's embedded player instead of the Mac.
+    var embedded = false
+    var volume = 1.0 {
+        didSet {
+            player.volume = Float(volume)
+            embed.setVolume(volume)
+        }
+    }
 
-    /// The Mac's Bonjour name; audio can't be had without it.
-    @ObservationIgnored var mac: String?
+    /// The Mac's audio service, while connected; audio can't come from the Mac without it.
+    @ObservationIgnored var endpoint: NWEndpoint?
     /// Something changed that the Mac should hear about (its "Continue from iPhone").
     @ObservationIgnored var onChange: (() -> Void)?
+    @ObservationIgnored let embed = EmbedPlayer()
     @ObservationIgnored private let player = AVPlayer()
+    @ObservationIgnored private var embedTime: TimeInterval = 0
     @ObservationIgnored private var token = 0
 
     var current: LinkSong? { queue.indices.contains(index) ? queue[index] : nil }
 
     var position: TimeInterval {
+        if embedded { return embedTime }
         let t = player.currentTime().seconds
         return t.isFinite ? t : 0
     }
@@ -35,12 +46,27 @@ import Network
     init() {
         NotificationCenter.default.addObserver(forName: AVPlayerItem.didPlayToEndTimeNotification, object: nil,
                                                queue: .main) { [weak self] _ in self?.next() }
+        embed.onTime = { [weak self] t in self?.embedTime = t }
+        embed.onEnded = { [weak self] in self?.next() }
+        embed.onError = { [weak self] _ in
+            guard let self else { return }
+            self.playing = false
+            self.error = "YouTube doesn't allow this song outside its app. Connect to your Mac to play it."
+            self.changed()
+        }
         let center = MPRemoteCommandCenter.shared()
         center.togglePlayPauseCommand.addTarget { [weak self] _ in self?.toggle(); return .success }
         center.playCommand.addTarget { [weak self] _ in if self?.playing == false { self?.toggle() }; return .success }
         center.pauseCommand.addTarget { [weak self] _ in self?.pause(); return .success }
         center.nextTrackCommand.addTarget { [weak self] _ in self?.next(); return .success }
         center.previousTrackCommand.addTarget { [weak self] _ in self?.previous(); return .success }
+    }
+
+    func play(_ songs: [LinkSong], at i: Int) {
+        guard songs.indices.contains(i) else { return }
+        queue = songs
+        index = i
+        load()
     }
 
     func take(_ handoff: LinkHandoff) {
@@ -59,24 +85,29 @@ import Network
         case .seek(let t): seek(t)
         case .volume(let v): volume = v
         case .jump(let i): if queue.indices.contains(i) { index = i; load() }
+        case .play(let songs, let i): play(songs, at: i)
         }
     }
 
     func toggle() {
         guard current != nil else { return }
-        if player.currentItem == nil || error != nil { return load(at: position) }
-        playing ? pause() : play()
+        if (!embedded && player.currentItem == nil) || error != nil { return load(at: position) }
+        playing ? pause() : resume()
     }
 
     func pause() {
-        player.pause()
+        embedded ? embed.pause() : player.pause()
         playing = false
         changed()
     }
 
-    private func play() {
-        try? AVAudioSession.sharedInstance().setActive(true)
-        player.play()
+    private func resume() {
+        if embedded {
+            embed.play()
+        } else {
+            try? AVAudioSession.sharedInstance().setActive(true)
+            player.play()
+        }
         playing = true
         changed()
     }
@@ -94,12 +125,17 @@ import Network
     }
 
     func seek(_ t: TimeInterval) {
-        player.seek(to: CMTime(seconds: t, preferredTimescale: 600))
+        if embedded {
+            embed.seek(t)
+            embedTime = t
+        } else {
+            player.seek(to: CMTime(seconds: t, preferredTimescale: 600))
+        }
         changed()
     }
 
-    /// Gets the song's file (cached, or from the Mac), plays it, then fetches the
-    /// next one ahead when that costs no mobile data.
+    /// The song's file, cached or from the Mac; without the Mac, the embedded player.
+    /// Then the next song is fetched ahead when that costs no mobile data.
     private func load(at start: TimeInterval = 0) {
         guard let song = current else { return }
         token += 1
@@ -107,24 +143,28 @@ import Network
         loading = true
         error = nil
         player.pause()
+        embed.stop()
         changed()
         Task { @MainActor in
             do {
-                let file = try await AudioFiles.file(for: song.id, from: mac, ahead: false)
+                let file = try await AudioFiles.file(for: song.id, from: endpoint, ahead: false)
                 guard mine == token else { return }
+                embedded = false
                 player.replaceCurrentItem(with: AVPlayerItem(url: file))
                 if start > 0 { await player.seek(to: CMTime(seconds: start, preferredTimescale: 600)) }
                 loading = false
-                play()
+                resume()
                 if queue.indices.contains(index + 1), AudioFiles.canDownloadAhead {
-                    _ = try? await AudioFiles.file(for: queue[index + 1].id, from: mac, ahead: true)
+                    _ = try? await AudioFiles.file(for: queue[index + 1].id, from: endpoint, ahead: true)
                 }
             } catch {
                 guard mine == token else { return }
+                player.replaceCurrentItem(with: nil)
+                embedded = true
+                embedTime = start
+                embed.load(song.id, at: start)
                 loading = false
-                playing = false
-                self.error = mac == nil ? "Not downloaded yet. Open Tide on your Mac on the same Wi-Fi."
-                                        : "Your Mac couldn't get this song."
+                playing = true
                 changed()
             }
         }
@@ -144,7 +184,7 @@ import Network
 }
 
 /// Songs downloaded from the Mac, kept in Caches so a song plays again without
-/// fetching it twice, and so playback carries on after leaving the Mac's Wi-Fi.
+/// fetching it twice, and so playback carries on when the Mac can't be reached.
 enum AudioFiles {
     private static let directory: URL = {
         let dir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
@@ -166,7 +206,7 @@ enum AudioFiles {
         return !path.currentPath.isExpensive && !path.currentPath.isConstrained
     }
 
-    static func file(for id: String, from mac: String?, ahead: Bool) async throws -> URL {
+    static func file(for id: String, from mac: NWEndpoint?, ahead: Bool) async throws -> URL {
         for quality in ["std", "low"] {
             let url = directory.appendingPathComponent("\(id)-\(quality).m4a")
             if FileManager.default.fileExists(atPath: url.path) { return url }
@@ -201,9 +241,8 @@ enum AudioFiles {
     }
 
     /// The Mac's audio service: one request line, then an 8-byte length and the file.
-    private static func download(_ request: String, from mac: String) async throws -> Data {
-        let connection = NWConnection(to: .service(name: mac, type: Link.audioService, domain: "local.", interface: nil),
-                                      using: .tcp)
+    private static func download(_ request: String, from mac: NWEndpoint) async throws -> Data {
+        let connection = NWConnection(to: mac, using: .tcp)
         return try await withCheckedThrowingContinuation { continuation in
             // Every callback runs on the main queue.
             nonisolated(unsafe) var finished = false

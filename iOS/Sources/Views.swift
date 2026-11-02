@@ -3,7 +3,6 @@ import SwiftUI
 struct NowPlayingScreen: View {
     @Environment(Remote.self) private var remote
     @State private var showQueue = false
-    @State private var showSettings = false
 
     var body: some View {
         NavigationStack {
@@ -11,17 +10,11 @@ struct NowPlayingScreen: View {
                 if let song = remote.state.song {
                     player(song)
                 } else {
-                    ContentUnavailableView(remote.connected ? "Nothing playing" : "Looking for your Mac",
-                                           systemImage: "desktopcomputer",
-                                           description: Text(remote.connected
-                                               ? "Play something in Tide on \(remote.macName ?? "your Mac")."
-                                               : "Open Tide on a Mac on the same Wi-Fi."))
+                    ContentUnavailableView("Nothing playing", systemImage: "music.note",
+                                           description: Text("Pick something in Home, Search or Library."))
                 }
             }
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button { showSettings = true } label: { Image(systemName: "gearshape") }
-                }
                 ToolbarItem(placement: .principal) { DeviceLabel() }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { showQueue = true } label: { Image(systemName: "list.bullet") }
@@ -30,7 +23,6 @@ struct NowPlayingScreen: View {
             }
             .navigationBarTitleDisplayMode(.inline)
             .sheet(isPresented: $showQueue) { QueueSheet() }
-            .sheet(isPresented: $showSettings) { SettingsSheet() }
         }
     }
 
@@ -47,9 +39,11 @@ struct NowPlayingScreen: View {
             Scrubber()
             Controls()
             VolumeSlider()
-            HandoffButton()
-            if let error = remote.target == .phone ? remote.local.error : nil {
-                Text(error).font(.footnote).foregroundStyle(.red)
+            if remote.target == .phone, let error = remote.local.error {
+                Text(error).font(.footnote).foregroundStyle(.red).multilineTextAlignment(.center)
+            } else if remote.target == .phone, remote.local.embedded {
+                Text("Playing through YouTube's player because your Mac can't be reached. Keep Tide open; playing in the background needs your Mac.")
+                    .font(.footnote).foregroundStyle(.secondary).multilineTextAlignment(.center)
             }
             Spacer(minLength: 0)
         }
@@ -57,22 +51,33 @@ struct NowPlayingScreen: View {
     }
 }
 
-/// Where the music is playing.
+/// Where the music is playing; tap to move it, like Spotify Connect.
 struct DeviceLabel: View {
     @Environment(Remote.self) private var remote
 
     var body: some View {
-        HStack(spacing: 6) {
-            if remote.target == .phone {
-                Image(systemName: "iphone")
-                Text("This iPhone")
-            } else {
-                Image(systemName: "desktopcomputer")
-                Text(remote.macName ?? "Mac")
-                if !remote.connected { ProgressView().controlSize(.mini) }
+        Menu {
+            Button { if remote.target == .mac { remote.continueOnPhone() } } label: {
+                Label("This iPhone", systemImage: remote.target == .phone ? "checkmark" : "iphone")
             }
+            if remote.connected {
+                Button { if remote.target == .phone { remote.continueOnMac() } } label: {
+                    Label(remote.macName ?? "Mac", systemImage: remote.target == .mac ? "checkmark" : "desktopcomputer")
+                }
+            }
+        } label: {
+            HStack(spacing: 6) {
+                if remote.handingOff {
+                    ProgressView().controlSize(.mini)
+                } else {
+                    Image(systemName: remote.target == .phone ? "iphone" : "desktopcomputer")
+                }
+                Text(remote.target == .phone ? "This iPhone" : remote.macName ?? "Mac")
+                Image(systemName: "chevron.down").font(.caption2)
+            }
+            .font(.subheadline.weight(.semibold))
         }
-        .font(.subheadline.weight(.semibold))
+        .tint(.primary)
     }
 }
 
@@ -148,30 +153,6 @@ struct VolumeSlider: View {
     }
 }
 
-struct HandoffButton: View {
-    @Environment(Remote.self) private var remote
-
-    var body: some View {
-        if remote.target == .phone {
-            Button { remote.continueOnMac() } label: {
-                Label("Continue on \(remote.macName ?? "Mac")", systemImage: "desktopcomputer")
-            }
-            .buttonStyle(.bordered)
-            .disabled(!remote.connected)
-        } else {
-            Button { remote.continueOnPhone() } label: {
-                if remote.handingOff {
-                    ProgressView()
-                } else {
-                    Label("Continue on iPhone", systemImage: "iphone")
-                }
-            }
-            .buttonStyle(.bordered)
-            .disabled(!remote.connected || remote.handingOff)
-        }
-    }
-}
-
 struct QueueSheet: View {
     @Environment(Remote.self) private var remote
     @Environment(\.dismiss) private var dismiss
@@ -212,6 +193,8 @@ struct SettingsSheet: View {
     @Environment(\.dismiss) private var dismiss
     @AppStorage("dataSaver") private var dataSaver = false
     @State private var downloaded = AudioFiles.size
+    @AppStorage("macHost") private var macHost = ""
+    @Environment(Library.self) private var library
 
     var body: some View {
         NavigationStack {
@@ -219,7 +202,15 @@ struct SettingsSheet: View {
                 Section {
                     Toggle("Data Saver", isOn: $dataSaver)
                 } footer: {
-                    Text("Plays songs at about 48 kbps instead of 128. Audio comes from your Mac over Wi-Fi and the next song is only fetched ahead on Wi-Fi, never on cellular or in Low Data Mode. Videos are never downloaded.")
+                    Text("Plays songs at about 48 kbps instead of 128. The next song is only fetched ahead on Wi-Fi, never on cellular or in Low Data Mode. Videos are never downloaded.")
+                }
+                Section {
+                    TextField("Mac address", text: $macHost, prompt: Text(UserDefaults.standard.stringArray(forKey: "macHosts")?.first ?? "100.x.y.z"))
+                        .keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled()
+                } header: {
+                    Text("Away from home")
+                } footer: {
+                    Text("With Tailscale on your Mac and iPhone, songs keep coming from your Mac anywhere. Tide fills in your Mac's Tailscale address the first time they meet on Wi-Fi; type one here to use another.")
                 }
                 Section {
                     LabeledContent("Downloaded songs", value: ByteCountFormatter.string(fromByteCount: Int64(downloaded), countStyle: .file))
@@ -228,7 +219,13 @@ struct SettingsSheet: View {
                         downloaded = AudioFiles.size
                     }
                 } footer: {
-                    Text("Songs you continue on iPhone are kept so they play again away from your Mac.")
+                    Text("Songs played on the iPhone are kept, so playing them again uses no data.")
+                }
+                Section {
+                    Button("Sign Out", role: .destructive) {
+                        Task { await library.signOut() }
+                        dismiss()
+                    }
                 }
             }
             .navigationTitle("Settings")

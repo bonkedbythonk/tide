@@ -351,7 +351,10 @@ struct Shelf<Content: View>: View {
         ScrollView(.horizontal, showsIndicators: false) {
             LazyHStack(alignment: .top, spacing: 16) { content }
                 .padding(.horizontal, 24)
+                // Room for a card growing on hover; the scroll view clips at its edge.
+                .padding(.vertical, 8)
         }
+        .padding(.vertical, -8)
         .onHover { router.pointerOverShelf = $0 }
     }
 }

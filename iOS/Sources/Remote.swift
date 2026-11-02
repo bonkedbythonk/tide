@@ -44,7 +44,9 @@ import UIKit
     func play(_ songs: [Song], at i: Int) {
         let list = songs.map(\.link)
         if target == .mac, connected {
-            link?.send(.command(.play(list, i)))
+            // A window around the song, like the Mac's own session, to keep the message small.
+            let start = max(0, i - 50)
+            link?.send(.command(.play(Array(list[start..<min(list.count, i + 500)]), i - start)))
         } else {
             target = .phone
             local.play(list, at: i)
@@ -156,6 +158,7 @@ import UIKit
             self.handingOff = false
             self.local.endpoint = nil
             if self.target == .mac { self.target = .phone }
+            self.retry()
         }
         self.link = link
         link.start()
@@ -172,8 +175,9 @@ import UIKit
         case .state(let state):
             macState = state
             macStateAt = .now
-            // Nothing playing here: show the Mac, like Spotify shows the active device.
-            if local.current == nil, state.song != nil { target = .mac }
+            // Nothing here and the Mac is playing: show the Mac, like Spotify shows
+            // the active device. A paused Mac doesn't take over the phone's taps.
+            if local.current == nil, state.playing { target = .mac }
         case .queue(let queue):
             macQueue = queue
         case .handoff(let handoff):

@@ -75,7 +75,11 @@ import Network
         load(at: handoff.position)
     }
 
-    var handoff: LinkHandoff { LinkHandoff(songs: queue, index: index, position: position) }
+    /// The queue around the current song, to keep the message small.
+    var handoff: LinkHandoff {
+        let start = max(0, index - 50)
+        return LinkHandoff(songs: Array(queue[start..<min(queue.count, index + 500)]), index: index - start, position: position)
+    }
 
     func apply(_ command: LinkCommand) {
         switch command {

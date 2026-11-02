@@ -20,27 +20,35 @@ import TideLink
 
     init(player: Player) {
         self.player = player
-        let name = Host.current().localizedName ?? "Mac"
-        if let control = Self.listener(LinkConnection.parameters, Link.controlPort) {
-            control.service = .init(name: name, type: Link.controlService)
-            control.newConnectionHandler = { [weak self] in self?.accept($0) }
-            listeners.append(control)
-        }
+        listen(LinkConnection.parameters, on: Link.controlPort, as: Link.controlService) { [weak self] in self?.accept($0) }
         let tcp = NWParameters.tcp
         tcp.includePeerToPeer = true
-        if let audio = Self.listener(tcp, Link.audioPort) {
-            audio.service = .init(name: name, type: Link.audioService)
-            audio.newConnectionHandler = { [weak self] in self?.serveAudio($0) }
-            listeners.append(audio)
-        }
-        listeners.forEach { $0.start(queue: .main) }
+        listen(tcp, on: Link.audioPort, as: Link.audioService) { [weak self] in self?.serveAudio($0) }
         // Checked once a second, sent only when something changed.
         timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in self?.broadcast() }
     }
 
-    /// On the fixed port when it's free, otherwise any (Bonjour still finds it).
-    private static func listener(_ params: NWParameters, _ port: UInt16) -> NWListener? {
-        (try? NWListener(using: params, on: NWEndpoint.Port(rawValue: port)!)) ?? (try? NWListener(using: params))
+    /// On the fixed port, so the phone can reach it by address; if that port is
+    /// taken, on any port (Bonjour still finds it). A taken port only shows up as
+    /// a failed listener, after it's started.
+    private func listen(_ params: NWParameters, on port: UInt16, as type: String,
+                        accept: @escaping (NWConnection) -> Void) {
+        params.allowLocalEndpointReuse = true
+        let fixed = NWEndpoint.Port(rawValue: port)!
+        func start(_ port: NWEndpoint.Port) {
+            guard let listener = try? NWListener(using: params, on: port) else { return }
+            listener.service = .init(name: Host.current().localizedName ?? "Mac", type: type)
+            listener.newConnectionHandler = accept
+            listener.stateUpdateHandler = { [weak self, weak listener] state in
+                guard case .failed = state, port == fixed, let listener else { return }
+                listener.cancel()
+                self?.listeners.removeAll { $0 === listener }
+                start(.any)
+            }
+            listeners.append(listener)
+            listener.start(queue: .main)
+        }
+        start(fixed)
     }
 
     /// This Mac's Tailscale addresses (100.64.0.0/10), for the phone to use away from home.

@@ -10,5 +10,6 @@ rm -rf dist && mkdir dist
 cp -R Tide.app dist/
 codesign --force --deep -s - dist/Tide.app
 ditto -c -k --keepParent dist/Tide.app dist/Tide-$version.zip
+(cd dist && shasum -a 256 Tide-$version.zip > SHA256SUMS)
 [[ $1 == --dry-run ]] && { echo "dist/Tide-$version.zip"; exit 0; }
-gh release create v$version dist/Tide-$version.zip --title "Tide $version" --notes-file dist/notes.md
+gh release create v$version dist/Tide-$version.zip dist/SHA256SUMS --title "Tide $version" --notes-file dist/notes.md

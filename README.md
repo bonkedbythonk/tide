@@ -36,19 +36,26 @@ The screenshots use made-up songs and covers (`Scripts/demo.sh`).
 
 ## Install
 
-Apple silicon Mac, macOS 15 or later. Tide plays through yt-dlp, so install it
-first with [Homebrew](https://brew.sh):
+**Mac** (Apple silicon, macOS 15 or later). Paste into Terminal:
 
 ```bash
-brew install yt-dlp deno
+curl -fsSL https://raw.githubusercontent.com/bonkedbythonk/tide/main/Scripts/install.sh | bash
 ```
 
-Then download `Tide-<version>.zip` from
+Run the same line again to update. It also installs yt-dlp through
+[Homebrew](https://brew.sh), which Tide plays through. Sign in with your Google
+account on first launch.
+
+<details>
+<summary>Install by hand</summary>
+
+Run `brew install yt-dlp deno`, then download `Tide-<version>.zip` from
 [Releases](https://github.com/bonkedbythonk/tide/releases), unzip it and drag
 Tide to Applications. The app is not notarized, so macOS blocks the first
 launch: go to System Settings > Privacy & Security and click **Open Anyway**,
-or run `xattr -dr com.apple.quarantine /Applications/Tide.app`. Sign in with
-your Google account on first launch.
+or run `xattr -dr com.apple.quarantine /Applications/Tide.app`.
+
+</details>
 
 Keep yt-dlp current with `brew upgrade yt-dlp`; most playback failures are an
 outdated yt-dlp.

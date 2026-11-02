@@ -172,7 +172,8 @@ enum SleepTimer: String, CaseIterable, Identifiable {
             self.publishNowPlaying()
         }
         e.onPause = { [weak self, unowned e] paused in
-            guard let self, e === self.engine, !self.isLoading, self.current != nil else { return }
+            // mpv reports "not paused" while idle; a restored song isn't loaded yet.
+            guard let self, e === self.engine, !self.isLoading, !self.needsLoad, self.current != nil else { return }
             self.isPlaying = !paused
             self.publishNowPlaying()
         }
@@ -236,7 +237,6 @@ enum SleepTimer: String, CaseIterable, Identifiable {
         let queue: [Song]
         let index: Int
         let position: TimeInterval
-        let video: Bool
     }
 
     /// The queue, song and spot, so the next launch picks up here (paused).
@@ -247,7 +247,7 @@ enum SleepTimer: String, CaseIterable, Identifiable {
         let start = max(0, index - 50)
         let end = min(queue.count, index + 500)
         DiskCache.save(Session(queue: Array(queue[start..<end]), index: index - start,
-                               position: position, video: videoMode), "session", now: now)
+                               position: position), "session", now: now)
     }
 
     private func restoreSession() {
@@ -255,10 +255,8 @@ enum SleepTimer: String, CaseIterable, Identifiable {
         queue = s.queue
         index = s.index
         position = s.position
+        // Comes back as the song, not the video: an unloaded video showed as a black box.
         duration = s.queue[s.index].duration
-        settingVideoForNewQueue = true
-        videoMode = s.video
-        settingVideoForNewQueue = false
         needsLoad = true
     }
 

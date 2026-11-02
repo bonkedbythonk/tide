@@ -71,6 +71,18 @@ import SwiftUI
     /// The decoded image on screen now (nil = no wallpaper).
     private(set) var image: NSImage?
     private(set) var imageID = ""
+    /// Average brightness of the image on screen, 0 (black) to 1 (white).
+    private(set) var brightness = 0.0
+
+    /// The black wash over the picture. In dark mode it's raised as far as needed
+    /// to keep a light picture (a pale cover, a snowy board) from going grey-white
+    /// behind white text: the result stays at or under `ceiling` brightness.
+    func wash(sharp: Bool, dark: Bool) -> Double {
+        let base = sharp ? 0.15 : dim
+        guard dark, brightness > 0 else { return base }
+        let ceiling = sharp ? 0.42 : 0.3
+        return min(0.85, max(base, 1 - ceiling / brightness))
+    }
 
     @ObservationIgnored private var coverURL: URL?
     @ObservationIgnored private var timer: Timer?
@@ -149,7 +161,7 @@ import SwiftUI
         loadToken += 1
         let token = loadToken
         guard let url else {
-            withAnimation(.easeInOut(duration: 1.2)) { image = nil; imageID = "" }
+            withAnimation(.easeInOut(duration: 1.2)) { image = nil; imageID = ""; brightness = 0 }
             return
         }
         Task.detached(priority: .utility) { [weak self] in
@@ -162,14 +174,27 @@ import SwiftUI
                       let source = CGImageSourceCreateWithData(data as CFData, nil) {
                 decoded = Self.downsample(source)
             }
+            let light = decoded.map(Self.averageBrightness) ?? 0
             await MainActor.run {
                 guard let self, token == self.loadToken, let decoded else { return }
                 withAnimation(.easeInOut(duration: 1.2)) {
                     self.image = NSImage(cgImage: decoded, size: NSSize(width: decoded.width, height: decoded.height))
                     self.imageID = url.path
+                    self.brightness = light
                 }
             }
         }
+    }
+
+    /// Draws the image into one pixel and reads its luma.
+    private static func averageBrightness(_ image: CGImage) -> Double {
+        var pixel = [UInt8](repeating: 0, count: 4)
+        guard let context = CGContext(data: &pixel, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4,
+                                      space: CGColorSpaceCreateDeviceRGB(),
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return 0 }
+        context.interpolationQuality = .medium
+        context.draw(image, in: CGRect(x: 0, y: 0, width: 1, height: 1))
+        return (0.2126 * Double(pixel[0]) + 0.7152 * Double(pixel[1]) + 0.0722 * Double(pixel[2])) / 255
     }
 
     private static func downsample(_ source: CGImageSource) -> CGImage? {
@@ -201,6 +226,7 @@ extension EnvironmentValues {
 struct WallpaperBackground: View {
     @Environment(WallpaperStore.self) private var wallpaper
     @Environment(\.wallpaperCanvas) private var canvas
+    @Environment(\.colorScheme) private var colorScheme
     var sharp = false
 
     var body: some View {
@@ -215,7 +241,7 @@ struct WallpaperBackground: View {
                     .clipped()
                     .blur(radius: sharp && wallpaper.source != .coverArt ? 0 : wallpaper.blur, opaque: true)
                     .saturation(wallpaper.blur > 40 ? 1.3 : 1)
-                    .overlay(Color.black.opacity(sharp ? 0.15 : wallpaper.dim))
+                    .overlay(Color.black.opacity(wallpaper.wash(sharp: sharp, dark: colorScheme == .dark)))
                     .offset(x: canvas == .zero ? 0 : -frame.minX, y: canvas == .zero ? 0 : -frame.minY)
                     .id(wallpaper.imageID)
                     .transition(.opacity)

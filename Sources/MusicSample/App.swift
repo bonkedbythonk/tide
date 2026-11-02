@@ -121,6 +121,10 @@ struct RootView: View {
             SpaceToPlay.install(player: player)
         }
         .task { await library.start() }
+        // Warms the yt-dlp worker on something you're likely to play anyway.
+        .onChange(of: library.home.first?.songs.first?.id, initial: true) {
+            if let song = library.home.first?.songs.first { player.prefetch(song) }
+        }
         // Lyrics load with every song, so Now Playing knows up front whether there are any.
         .task(id: player.current?.id) {
             guard let song = player.current else { return }

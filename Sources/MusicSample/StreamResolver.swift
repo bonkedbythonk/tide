@@ -114,9 +114,17 @@ actor StreamResolver {
     }
 
     private static func run(_ videoId: String, video: Bool, maxHeight: Int, client: String?) async throws -> Streams {
-        guard let executable else { throw Failure.missingTool }
         let format = video ? "bv*[height<=\(maxHeight)]+ba/b[height<=\(maxHeight)]/b" : "ba/b"
         let page = video ? "https://www.youtube.com/watch?v=" : "https://music.youtube.com/watch?v="
+        if let warm = await YTDLPWorker.shared.resolve(url: page + videoId, format: format, client: client),
+           let first = warm.urls.first {
+            let availableAt = Date(timeIntervalSince1970: warm.availableAt)
+            // Separate video and audio streams come back as two URLs: video, then audio.
+            return warm.urls.count >= 2
+                ? Streams(audio: warm.urls[1], video: first, resolvedAt: .now, availableAt: availableAt)
+                : Streams(audio: first, video: video ? first : nil, resolvedAt: .now, availableAt: availableAt)
+        }
+        guard let executable else { throw Failure.missingTool }
         let process = Process()
         process.executableURL = executable
         process.arguments = (client.map { ["--extractor-args", "youtube:player_client=\($0)"] } ?? []) + [

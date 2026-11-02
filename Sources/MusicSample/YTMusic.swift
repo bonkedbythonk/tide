@@ -324,7 +324,8 @@ enum YTParse {
         }
         var data = PageData(id: id, title: title, subtitle: subtitle, artwork: art, songs: list)
         data.suggestions = suggestionShelf.map(songs)
-        let sectionList = findAll("sectionListRenderer", in: json).last
+        // Dictionary order is random, so pick the section list by its continuation, not position.
+        let sectionList = findAll("sectionListRenderer", in: json).first { $0["continuations"] != nil }
         return ParsedPage(
             data: data,
             more: mainShelf.flatMap(continuation),

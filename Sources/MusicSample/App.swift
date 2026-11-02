@@ -136,11 +136,14 @@ struct RootView: View {
             PlayerBar()
         }
         .background {
-            // Reports the window's size so every wallpaper slice lines up.
+            // Reports the window's size so every wallpaper slice lines up, and puts the
+            // wallpaper behind the whole window so the 1-pt gap at the split divider
+            // shows wallpaper instead of the black window background.
             GeometryReader { proxy in
                 Color.clear.preference(key: CanvasSizeKey.self, value: proxy.size)
             }
             .ignoresSafeArea()
+            if wallpaper.isActive { WallpaperBackground() }
         }
         .onPreferenceChange(CanvasSizeKey.self) { canvasSize = $0 }
         .onChange(of: wallpaper.isActive, initial: true) { _, on in

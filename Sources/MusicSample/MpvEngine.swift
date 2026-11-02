@@ -73,6 +73,9 @@ final class MpvEngine {
         let options: [(String, String)] = [
             ("vo", "gpu-next"), ("gpu-api", "vulkan"), ("gpu-context", "moltenvk"),
             ("hwdec", "videotoolbox"),
+            // Fill the frame, cropping a sliver, rather than adding thin black bars when
+            // the picture's shape is a hair off the frame's.
+            ("panscan", "1.0"),
             ("input-default-bindings", "no"), ("input-cursor", "no"),
             ("input-vo-keyboard", "no"), ("input-media-keys", "no"),
             ("osc", "no"), ("osd-level", "0"),

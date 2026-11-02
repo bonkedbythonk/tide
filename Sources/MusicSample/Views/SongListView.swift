@@ -157,11 +157,16 @@ struct SongListView: View {
             }
             .scrollContentBackground(.hidden)
             .alternatingRowBackgrounds(.disabled)
-            // Over a wallpaper the list sits on a material: never text straight on a picture.
+            // AppKit's column header is an opaque black bar over a wallpaper; sorting
+            // moves to the Sort menu in the page header instead.
+            .tableColumnHeaders(wallpaper.isActive ? .hidden : .visible)
+            // Over a wallpaper the list sits on one edge-to-edge material panel: never
+            // text straight on a picture, and no strips of wallpaper at the sides.
             .background {
                 if wallpaper.isActive {
-                    RoundedRectangle(cornerRadius: 12, style: .continuous).fill(.regularMaterial)
-                        .padding(.horizontal, 8)
+                    UnevenRoundedRectangle(topLeadingRadius: 16, topTrailingRadius: 16, style: .continuous)
+                        .fill(.regularMaterial)
+                        .ignoresSafeArea(edges: .bottom)
                 }
             }
             .opacity(appeared ? 1 : 0)
@@ -195,11 +200,29 @@ struct SongListView: View {
                     .lineLimit(1)
                 HStack(spacing: 10) {
                     Button { player.playAll(visible) } label: {
-                        Label("Play", systemImage: "play.fill").frame(minWidth: 60)
+                        Label("Play", systemImage: "play.fill")
                     }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(PillButtonStyle(prominent: true))
                     Button { player.playAll(visible, shuffled: true) } label: {
                         Label("Shuffle", systemImage: "shuffle")
+                    }
+                    .buttonStyle(PillButtonStyle(prominent: false))
+                    if wallpaper.isActive {
+                        Menu {
+                            Picker("Sort by", selection: $sortOrder) {
+                                Text("Playlist order").tag([KeyPathComparator(\SongRowItem.number)])
+                                Text("Title").tag([KeyPathComparator(\SongRowItem.title)])
+                                Text("Artist").tag([KeyPathComparator(\SongRowItem.artist)])
+                                Text("Album").tag([KeyPathComparator(\SongRowItem.album)])
+                                Text("Length").tag([KeyPathComparator(\SongRowItem.duration)])
+                            }
+                            .pickerStyle(.inline)
+                        } label: {
+                            Label("Sort", systemImage: "arrow.up.arrow.down")
+                        }
+                        .menuStyle(.button)
+                        .buttonStyle(PillButtonStyle(prominent: false))
+                        .fixedSize()
                     }
                     if selection.count > 1 {
                         Text("\(selection.count) selected — drag them onto a playlist in the sidebar")
@@ -295,3 +318,27 @@ struct SearchView: View {
     }
 }
 
+
+/// Rounded pill buttons that read on both plain backgrounds and wallpaper glass:
+/// solid accent for the main action, frosted for the rest.
+struct PillButtonStyle: ButtonStyle {
+    let prominent: Bool
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.callout.weight(.semibold))
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+            .foregroundStyle(prominent ? Color.white : Color.primary)
+            .background {
+                if prominent {
+                    Capsule().fill(Color.accentColor)
+                } else {
+                    Capsule().fill(.ultraThinMaterial)
+                        .overlay(Capsule().strokeBorder(.white.opacity(0.15)))
+                }
+            }
+            .scaleEffect(configuration.isPressed ? 0.96 : 1)
+            .animation(.snappy(duration: 0.15), value: configuration.isPressed)
+    }
+}

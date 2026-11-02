@@ -224,6 +224,9 @@ struct CachedImage: View {
             }
         }
         .task(id: url) {
+            // A reused row can hand this view a different song's URL: show that one,
+            // never the previous picture.
+            image = ImageDecodeCache.shared.cached(url, maxPixelSize: maxPixelSize)
             if image == nil { image = await ImageDecodeCache.shared.image(url, maxPixelSize: maxPixelSize) }
         }
     }

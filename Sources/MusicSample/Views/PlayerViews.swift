@@ -299,7 +299,8 @@ struct QueueView: View {
                 if player.upNext.isEmpty {
                     Text("Drop songs here to queue them").foregroundStyle(.secondary)
                 }
-                ForEach(Array(player.upNext.enumerated()), id: \.offset) { i, s in
+                ForEach(QueueEntry.list(player.upNext)) { entry in
+                    let i = entry.index, s = entry.song
                     QueueRow(song: s, current: false)
                         .contentShape(Rectangle())
                         .onTapGesture { player.jump(to: player.index + 1 + i) }
@@ -459,7 +460,6 @@ struct NowPlayingView: View {
                         Group {
                             if player.videoMode {
                                 AmbientVideo(song: s)
-                                    .frame(width: 520)
                                     .onTapGesture(count: 2) { router.enterVideoFullscreen() }
                                     .overlay(alignment: .bottomTrailing) {
                                         Button { router.enterVideoFullscreen() } label: {
@@ -498,7 +498,7 @@ struct NowPlayingView: View {
                         }
                         .font(.title2)
                     }
-                    .frame(width: player.videoMode ? 520 : 380)
+                    .frame(width: player.videoMode && player.videoAspect >= 1.2 ? 520 : 380)
                     .frame(maxHeight: .infinity)
                     .animation(.snappy(duration: 0.35), value: s.id)
                     .animation(.snappy(duration: 0.35), value: player.videoMode)
@@ -583,7 +583,8 @@ struct NowPlayingQueue: View {
                 if player.upNext.isEmpty {
                     Text("Nothing queued").foregroundStyle(.secondary).padding(8)
                 }
-                ForEach(Array(player.upNext.enumerated()), id: \.offset) { i, s in
+                ForEach(QueueEntry.list(player.upNext)) { entry in
+                    let i = entry.index, s = entry.song
                     QueueRow(song: s, current: false)
                         .padding(8)
                         .contentShape(Rectangle())
@@ -645,5 +646,17 @@ struct PlayingIndicator: View {
                 .foregroundStyle(.white)
                 .symbolEffect(.variableColor.iterative.dimInactiveLayers, isActive: player.isPlaying)
         }
+    }
+}
+
+/// A queue row's identity: its place and its song. Place alone let a row keep the
+/// previous song's cover and name when the queue changed.
+struct QueueEntry: Identifiable {
+    let index: Int
+    let song: Song
+    var id: String { "\(index)-\(song.id)" }
+
+    static func list(_ songs: [Song]) -> [QueueEntry] {
+        songs.enumerated().map { QueueEntry(index: $0.offset, song: $0.element) }
     }
 }

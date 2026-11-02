@@ -63,7 +63,17 @@ struct AmbientVideo: View {
                 .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             if player.isLoading || player.videoLoading { ProgressView().controlSize(.large) }
         }
-        .aspectRatio(16 / 9, contentMode: .fit)
+        .frame(width: size.width, height: size.height)
+        .animation(.snappy, value: player.videoAspect)
+    }
+
+    /// A wide video gets the 520 pt stage; a square or tall picture (often just the
+    /// cover of an album track) stays the size of the normal artwork.
+    private var size: CGSize {
+        let aspect = player.videoAspect
+        if aspect < 1.2 { return CGSize(width: 340 * min(aspect, 1), height: 340 / max(aspect, 1)) }
+        let clamped = min(aspect, 2.4)
+        return CGSize(width: 520, height: 520 / clamped)
     }
 }
 

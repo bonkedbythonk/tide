@@ -56,6 +56,7 @@ final class MpvEngine {
 
     var onTime: ((Double) -> Void)?
     var onDuration: ((Double) -> Void)?
+    var onVideoAspect: ((Double) -> Void)?
     var onPause: ((Bool) -> Void)?
     var onBuffering: ((Bool) -> Void)?
     var onEnded: (() -> Void)?
@@ -96,6 +97,7 @@ final class MpvEngine {
         mpv_observe_property(handle, 2, "duration", MPV_FORMAT_DOUBLE)
         mpv_observe_property(handle, 3, "pause", MPV_FORMAT_FLAG)
         mpv_observe_property(handle, 4, "paused-for-cache", MPV_FORMAT_FLAG)
+        mpv_observe_property(handle, 5, "video-params/aspect", MPV_FORMAT_DOUBLE)
 
         videoView.onDrawableSizeChanged = { [weak self] _ in self?.nudgeVideoSize() }
 
@@ -187,7 +189,11 @@ final class MpvEngine {
                 if p.format == MPV_FORMAT_DOUBLE {
                     let value = data.assumingMemoryBound(to: Double.self).pointee
                     DispatchQueue.main.async { [weak self] in
-                        if name == "time-pos" { self?.onTime?(value) } else { self?.onDuration?(value) }
+                        switch name {
+                        case "time-pos": self?.onTime?(value)
+                        case "duration": self?.onDuration?(value)
+                        default: self?.onVideoAspect?(value)
+                        }
                     }
                 } else if p.format == MPV_FORMAT_FLAG {
                     let value = data.assumingMemoryBound(to: Int32.self).pointee != 0

@@ -69,6 +69,9 @@ enum SleepTimer: String, CaseIterable, Identifiable {
     }
     /// The picture is on its way for a song that's already playing.
     var videoLoading = false
+    /// Width / height of the video picture; an album track's "video" is often its
+    /// square cover.
+    var videoAspect = 16.0 / 9
 
     /// Highest video resolution to ask for (Pear's quality-changer).
     var videoQuality = Prefs.int("videoQuality", 1080) {
@@ -110,6 +113,9 @@ enum SleepTimer: String, CaseIterable, Identifiable {
 
     init() {
         engine.onFileLoaded = { [weak self] in self?.awaitingFile = false }
+        engine.onVideoAspect = { [weak self] aspect in
+            if aspect > 0.2 { self?.videoAspect = aspect }
+        }
         engine.onTime = { [weak self] t in
             guard let self, !self.awaitingFile else { return }
             self.livePosition = t

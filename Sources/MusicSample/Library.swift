@@ -145,6 +145,15 @@ import SwiftUI
         (pages[pageID]?.songs ?? []) + (localAdds[pageID] ?? [])
     }
 
+    /// Songs YouTube Music's Autoplay would play after `song`, without `song` itself.
+    @MainActor
+    func radio(after song: Song) async -> [Song] {
+        guard let json = try? await client.radio(song.id) else { return [] }
+        let songs = YTParse.radio(json).filter { $0.id != song.id }
+        songs.forEach(remember)
+        return songs
+    }
+
     /// One shelf per kind of result, all asked for at once.
     @MainActor
     func search(_ query: String) async -> [HomeShelf] {

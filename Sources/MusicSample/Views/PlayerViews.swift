@@ -245,6 +245,8 @@ struct SoundPopover: View {
                         .monospacedDigit().frame(width: 34, alignment: .trailing)
                 }
             }
+            Toggle("Autoplay similar songs", isOn: $player.autoplay)
+                .help("When the queue runs out, keep going with YouTube Music's radio for the last song")
             Toggle("Gapless playback", isOn: $player.gapless)
             Toggle("Match YouTube Music loudness", isOn: $player.matchLoudness)
             Toggle("Smooth transitions", isOn: $player.smoothTransitions)

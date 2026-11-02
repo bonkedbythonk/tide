@@ -142,10 +142,11 @@ enum DiskCache {
         return try? JSONDecoder().decode(type, from: data)
     }
 
-    static func save<T: Encodable>(_ value: T, _ name: String) {
+    /// `now` writes before returning, for when the app is about to quit.
+    static func save<T: Encodable>(_ value: T, _ name: String, now: Bool = false) {
         guard let data = try? JSONEncoder().encode(value) else { return }
         let url = file(name)
-        queue.async { try? data.write(to: url, options: .atomic) }
+        if now { queue.sync { try? data.write(to: url, options: .atomic) } } else { queue.async { try? data.write(to: url, options: .atomic) } }
     }
 
     static func clear() {

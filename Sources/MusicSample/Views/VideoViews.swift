@@ -38,6 +38,8 @@ private struct VideoHostView: NSViewRepresentable {
 
     func updateNSView(_ host: NSView, context: Context) {
         guard owns, video.superview !== host else { return }
+        // After a crossfade the other mpv instance is playing, with its own view.
+        host.subviews.forEach { $0.removeFromSuperview() }
         video.removeFromSuperview()
         video.frame = host.bounds
         video.autoresizingMask = [.width, .height]

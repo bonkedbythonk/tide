@@ -133,6 +133,11 @@ final class YTClient {
         return try await call("browse", ["continuation": token])
     }
 
+    /// YouTube Music's radio for a song: the songs its Autoplay would queue after it.
+    func radio(_ videoId: String) async throws -> JSON {
+        try await call("next", ["videoId": videoId, "playlistId": "RDAMVM" + videoId, "isAudioOnly": true])
+    }
+
     /// `params` picks one kind of result (see `SearchKind`); about 20 come back
     /// instead of the 3 or so per kind of a plain search.
     func search(_ query: String, params: String) async throws -> JSON {
@@ -279,6 +284,23 @@ enum YTParse {
         }
         return Song(id: videoId, title: title, artist: artist, album: album, albumID: albumID,
                     artistID: artistID, duration: duration, artwork: thumbnail(r["thumbnail"]).url)
+    }
+
+    /// Songs of a radio queue (playlistPanelVideoRenderer), from the `next` endpoint.
+    static func radio(_ json: JSON) -> [Song] {
+        findAll("playlistPanelVideoRenderer", in: json).compactMap { r in
+            guard let id = r["videoId"] as? String else { return nil }
+            let title = text(r["title"])
+            guard !title.isEmpty else { return nil }
+            let byline = runs(r["longBylineText"])
+            let artistRun = byline.first { pageType($0) == "MUSIC_PAGE_TYPE_ARTIST" } ?? byline.first
+            let albumRun = byline.first { pageType($0) == "MUSIC_PAGE_TYPE_ALBUM" }
+            func browseID(_ run: JSON?) -> String? { run.flatMap { dig($0, "navigationEndpoint", "browseEndpoint", "browseId") as? String } }
+            return Song(id: id, title: title, artist: artistRun?["text"] as? String ?? "",
+                        album: albumRun?["text"] as? String ?? "", albumID: browseID(albumRun),
+                        artistID: browseID(artistRun), duration: seconds(text(r["lengthText"])) ?? 0,
+                        artwork: thumbnail(r["thumbnail"]).url)
+        }
     }
 
     /// A card (musicTwoRowItemRenderer): album, playlist, mix, artist or a single video.

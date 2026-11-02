@@ -37,11 +37,16 @@ enum SleepTimer: String, CaseIterable, Identifiable {
         didSet { applyVolume(); Prefs.set(volume, "volume") }
     }
     var shuffle = Prefs.bool("shuffle") { didSet { Prefs.set(shuffle, "shuffle") } }
-    var isMuted = false { didSet { engine.set("mute", isMuted ? "yes" : "no") } }
+    var isMuted = false { didSet { engines.forEach { $0.set("mute", isMuted ? "yes" : "no") } } }
     var repeatMode = RepeatMode(rawValue: Prefs.string("repeat") ?? "") ?? .off {
         didSet { Prefs.set(repeatMode.rawValue, "repeat") }
     }
-    var crossfade = 0.0
+    /// Seconds the end of one song overlaps the start of the next (0 = off).
+    var crossfade = Prefs.double("crossfade", 0) { didSet { Prefs.set(crossfade, "crossfade") } }
+    /// At the end of the queue, keep going with YouTube Music's radio for the last song.
+    var autoplay = Prefs.bool("autoplay", true) { didSet { Prefs.set(autoplay, "autoplay") } }
+    /// Fetches the radio; set by the app, which owns the YouTube client.
+    @ObservationIgnored var radio: ((Song) async -> [Song])?
     var gapless = true
     var eq = EQPreset.flat
     /// Turn loud tracks down the way YouTube Music does (on by default).
@@ -58,7 +63,7 @@ enum SleepTimer: String, CaseIterable, Identifiable {
     /// reloads the track as the other kind, from the same moment.
     var videoMode = false {
         didSet {
-            guard oldValue != videoMode, !settingVideoForNewQueue, let song = current else { return }
+            guard oldValue != videoMode, !settingVideoForNewQueue, !needsLoad, let song = current else { return }
             // A song and its video share one timeline, so the audio keeps playing and
             // only the picture is added or hidden. Reloading the track cut the sound out.
             guard !isLoading, lastError == nil else {
@@ -87,7 +92,19 @@ enum SleepTimer: String, CaseIterable, Identifiable {
         didSet { Prefs.set(smoothTransitions, "smoothTransitions") }
     }
 
-    @ObservationIgnored let engine = MpvEngine()
+    /// Two mpv instances only while crossfading: the next song starts on the other one
+    /// and that one carries on. The second is made the first time it's needed.
+    @ObservationIgnored private var engines = [MpvEngine()]
+    private var active = 0
+    var engine: MpvEngine { engines[active] }
+    /// The engine still playing the end of the previous song during a crossfade.
+    @ObservationIgnored private var outgoing: MpvEngine?
+    @ObservationIgnored private var outgoingTimer: Timer?
+    @ObservationIgnored private var crossfading = false
+    /// A song restored from last time; nothing is loaded in mpv until Play.
+    @ObservationIgnored private var needsLoad = false
+    @ObservationIgnored private var lastSessionSave = Date.distantPast
+    @ObservationIgnored private var radioSeed: String?
     @ObservationIgnored private var fadeLevel = 1.0
     @ObservationIgnored private var fadeTimer: Timer?
     /// The track ended by itself; the next one starts at full volume, no fade-in.
@@ -112,14 +129,30 @@ enum SleepTimer: String, CaseIterable, Identifiable {
     var length: TimeInterval { duration > 0 ? duration : (current?.duration ?? 0) }
 
     init() {
-        engine.onFileLoaded = { [weak self] in self?.awaitingFile = false }
-        engine.onVideoAspect = { [weak self] aspect in
+        wire(engines[0])
+        applyVolume()
+        restoreSession()
+        nowPlaying = NowPlayingCenter(player: self)
+        publishNowPlaying()
+        NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.saveSession(now: true)
+        }
+    }
+
+    /// Only the active engine speaks for the player; the outgoing one during a
+    /// crossfade is ignored, its end included.
+    private func wire(_ e: MpvEngine) {
+        e.onFileLoaded = { [weak self, unowned e] in
+            guard let self, e === self.engine else { return }
+            self.awaitingFile = false
+        }
+        e.onVideoAspect = { [weak self, unowned e] aspect in
             // Ignore tiny changes so the stage never jitters.
-            guard let self, aspect > 0.2, abs(aspect - self.videoAspect) > 0.03 else { return }
+            guard let self, e === self.engine, aspect > 0.2, abs(aspect - self.videoAspect) > 0.03 else { return }
             self.videoAspect = aspect
         }
-        engine.onTime = { [weak self] t in
-            guard let self, !self.awaitingFile else { return }
+        e.onTime = { [weak self, unowned e] t in
+            guard let self, e === self.engine, !self.awaitingFile else { return }
             self.livePosition = t
             guard !self.isLoading else { return }
             self.position = t
@@ -127,26 +160,121 @@ enum SleepTimer: String, CaseIterable, Identifiable {
                 self.fadeInWhenPlaying = false
                 self.fadeLevel = 0
                 self.applyFade()
-                self.fade(to: 1, over: 0.4)
+                self.fade(to: 1, over: self.crossfading ? self.crossfade : 0.4, always: self.crossfading)
+                self.crossfading = false
             }
+            self.startCrossfadeIfDue(at: t)
+            if Date().timeIntervalSince(self.lastSessionSave) > 10 { self.saveSession() }
         }
-        engine.onDuration = { [weak self] d in
-            guard let self, !self.awaitingFile else { return }
+        e.onDuration = { [weak self, unowned e] d in
+            guard let self, e === self.engine, !self.awaitingFile else { return }
             self.duration = d
             self.publishNowPlaying()
         }
-        engine.onPause = { [weak self] paused in
-            guard let self, !self.isLoading, self.current != nil else { return }
+        e.onPause = { [weak self, unowned e] paused in
+            guard let self, e === self.engine, !self.isLoading, self.current != nil else { return }
             self.isPlaying = !paused
             self.publishNowPlaying()
         }
-        engine.onEnded = { [weak self] in self?.trackEnded() }
-        engine.onError = { [weak self] message in
-            self?.lastError = "Playback failed: \(message)"
-            self?.isPlaying = false
+        e.onEnded = { [weak self, unowned e] in
+            guard let self, e === self.engine else { return }
+            self.trackEnded()
         }
-        applyVolume()
-        nowPlaying = NowPlayingCenter(player: self)
+        e.onError = { [weak self, unowned e] message in
+            guard let self, e === self.engine else { return }
+            self.lastError = "Playback failed: \(message)"
+            self.isPlaying = false
+        }
+    }
+
+    // MARK: Crossfade
+
+    /// Near the end of a song, starts the next one on the other engine and lets
+    /// this one fade out underneath it. Not for videos, repeat-one, or short songs.
+    private func startCrossfadeIfDue(at t: TimeInterval) {
+        guard crossfade > 0, outgoing == nil, isPlaying, !videoMode, repeatMode != .one,
+              length > crossfade * 2 + 5, t >= length - crossfade,
+              index + 1 < queue.count || repeatMode == .all else { return }
+        let old = engine
+        if engines.count == 1 {
+            let second = MpvEngine()
+            wire(second)
+            engines.append(second)
+        }
+        active = 1 - active
+        engine.set("mute", isMuted ? "yes" : "no")
+        outgoing = old
+        let from = fadeLevel
+        let began = Date()
+        let seconds = crossfade
+        let timer = Timer(timeInterval: 1.0 / 30, repeats: true) { [weak self] timer in
+            let progress = min(1, Date().timeIntervalSince(began) / seconds)
+            _ = old.trySet("ao-volume", String(format: "%.1f", from * (1 - progress) * 100))
+            if progress >= 1 { timer.invalidate(); self?.finishCrossfade() }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        outgoingTimer = timer
+        crossfading = true
+        fadeLevel = 0
+        skipForward = true
+        index = index + 1 < queue.count ? index + 1 : 0
+        load()
+    }
+
+    /// Stops the outgoing song: at the end of the fade, or at once when you skip,
+    /// pause or pick something else mid-crossfade.
+    private func finishCrossfade() {
+        outgoingTimer?.invalidate()
+        outgoingTimer = nil
+        outgoing?.stop()
+        outgoing = nil
+    }
+
+    // MARK: Session
+
+    private struct Session: Codable {
+        let queue: [Song]
+        let index: Int
+        let position: TimeInterval
+        let video: Bool
+    }
+
+    /// The queue, song and spot, so the next launch picks up here (paused).
+    private func saveSession(now: Bool = false) {
+        lastSessionSave = Date()
+        guard current != nil else { return }
+        // A long queue is cut to the part around the current song.
+        let start = max(0, index - 50)
+        let end = min(queue.count, index + 500)
+        DiskCache.save(Session(queue: Array(queue[start..<end]), index: index - start,
+                               position: position, video: videoMode), "session", now: now)
+    }
+
+    private func restoreSession() {
+        guard let s = DiskCache.load(Session.self, "session"), s.queue.indices.contains(s.index) else { return }
+        queue = s.queue
+        index = s.index
+        position = s.position
+        duration = s.queue[s.index].duration
+        settingVideoForNewQueue = true
+        videoMode = s.video
+        settingVideoForNewQueue = false
+        needsLoad = true
+    }
+
+    // MARK: Autoplay
+
+    /// On the last song or the one before it, adds YouTube's radio for it to the queue.
+    private func extendWithRadioIfNeeded() {
+        guard autoplay, repeatMode == .off, index >= queue.count - 2, let seed = current,
+              radioSeed != seed.id, let radio else { return }
+        radioSeed = seed.id
+        Task { @MainActor [weak self] in
+            let songs = await radio(seed)
+            guard let self, self.current?.id == seed.id else { return }
+            let have = Set(self.queue.map(\.id))
+            self.queue += songs.filter { !have.contains($0.id) }
+        }
     }
 
     /// Resolves the current track's streams (cached or prefetched when possible)
@@ -161,7 +289,8 @@ enum SleepTimer: String, CaseIterable, Identifiable {
         }
         loadToken += 1
         let token = loadToken
-        let fadeIn = smoothTransitions && !advancingNaturally
+        needsLoad = false
+        let fadeIn = crossfading || (smoothTransitions && !advancingNaturally)
         advancingNaturally = false
         isLoading = true
         isPlaying = autoplay
@@ -202,9 +331,12 @@ enum SleepTimer: String, CaseIterable, Identifiable {
                 self.engine.load(audio: streams.audio, video: streams.video, start: begin, paused: !autoplay,
                                  gainDb: self.matchLoudness ? streams.gainDb : 0)
                 self.isLoading = false
+                self.saveSession()
+                self.extendWithRadioIfNeeded()
                 await self.resolver.prefetch(self.upNext.prefix(3).map(\.id), video: video, maxHeight: height)
             } catch {
                 guard token == self.loadToken else { return }
+                self.crossfading = false
                 self.fade(to: 0, over: 0.2) { [weak self] in self?.engine.set("pause", "yes") }
                 self.isLoading = false
                 self.isPlaying = false
@@ -253,6 +385,8 @@ enum SleepTimer: String, CaseIterable, Identifiable {
             list = [song] + list.enumerated().filter { $0.offset != first }.map(\.element).shuffled()
             first = 0
         }
+        finishCrossfade()
+        crossfading = false
         settingVideoForNewQueue = true
         videoMode = video
         settingVideoForNewQueue = false
@@ -274,6 +408,8 @@ enum SleepTimer: String, CaseIterable, Identifiable {
 
     func jump(to queueIndex: Int) {
         guard queue.indices.contains(queueIndex) else { return }
+        finishCrossfade()
+        crossfading = false
         skipForward = queueIndex > index
         index = queueIndex
         load()
@@ -281,7 +417,8 @@ enum SleepTimer: String, CaseIterable, Identifiable {
 
     func toggle() {
         guard current != nil else { return }
-        if lastError != nil { return load(at: position) }
+        if lastError != nil || needsLoad { return load(at: position) }
+        finishCrossfade()
         isPlaying.toggle()
         if isPlaying {
             if smoothTransitions {
@@ -295,12 +432,14 @@ enum SleepTimer: String, CaseIterable, Identifiable {
                 guard let self, !self.isPlaying else { return }
                 self.engine.set("pause", "yes")
             }
+            saveSession()
         }
         publishNowPlaying()
     }
 
     func next() {
         guard !queue.isEmpty else { return }
+        if !advancingNaturally { finishCrossfade(); crossfading = false }
         skipForward = true
         if index + 1 < queue.count {
             index += 1
@@ -318,6 +457,8 @@ enum SleepTimer: String, CaseIterable, Identifiable {
 
     func previous() {
         guard !queue.isEmpty else { return }
+        finishCrossfade()
+        crossfading = false
         if position > 3 || index == 0 {
             // Rewind to the start: fade out, jump, fade back in.
             fade(to: 0, over: 0.15) { [weak self] in
@@ -337,9 +478,10 @@ enum SleepTimer: String, CaseIterable, Identifiable {
     }
 
     /// Ramps the volume between silent (0) and the slider's level (1), then runs `done`.
-    private func fade(to target: Double, over seconds: Double, then done: (() -> Void)? = nil) {
+    /// `always`: fade even with smooth transitions off (a crossfade).
+    private func fade(to target: Double, over seconds: Double, always: Bool = false, then done: (() -> Void)? = nil) {
         fadeTimer?.invalidate()
-        guard smoothTransitions, seconds > 0 else {
+        guard smoothTransitions || always, seconds > 0 else {
             fadeLevel = target
             applyVolume()
             done?()
@@ -363,6 +505,7 @@ enum SleepTimer: String, CaseIterable, Identifiable {
     }
 
     func seek(_ time: TimeInterval) {
+        finishCrossfade()
         position = time
         engine.seek(time)
         publishNowPlaying()

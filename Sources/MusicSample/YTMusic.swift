@@ -7,11 +7,13 @@ typealias JSON = [String: Any]
 enum YTError: LocalizedError {
     case signedOut
     case http(Int)
+    case refused
 
     var errorDescription: String? {
         switch self {
         case .signedOut: "Not signed in"
         case .http(let code): "YouTube Music returned HTTP \(code)"
+        case .refused: "YouTube Music didn't accept the change"
         }
     }
 }
@@ -120,6 +122,42 @@ final class YTClient {
     }
 
     func browse(_ id: String) async throws -> JSON { try await call("browse", ["browseId": id]) }
+
+    /// Changes one of your playlists (ids without "VL"). Answers 200 even when it
+    /// fails, so the status is checked. Returns the result of each action.
+    @discardableResult
+    func editPlaylist(_ playlistID: String, _ actions: [JSON]) async throws -> [JSON] {
+        let json = try await call("browse/edit_playlist", ["playlistId": playlistID, "actions": actions])
+        guard (json["status"] as? String)?.contains("SUCCEEDED") == true else { throw YTError.refused }
+        return json["playlistEditResults"] as? [JSON] ?? []
+    }
+
+    /// A new private playlist; returns its id (without "VL").
+    func createPlaylist(_ title: String) async throws -> String {
+        let json = try await call("playlist/create", ["title": title, "description": "", "privacyStatus": "PRIVATE"])
+        guard let id = json["playlistId"] as? String else { throw YTError.refused }
+        return id
+    }
+
+    func deletePlaylist(_ playlistID: String) async throws {
+        _ = try await call("playlist/delete", ["playlistId": playlistID])
+    }
+
+    /// "like", "dislike" or "removelike" for a song (videoId) or an album/playlist (playlistId).
+    func rate(_ rating: String, videoId: String? = nil, playlistId: String? = nil) async throws {
+        let target: JSON = videoId.map { ["videoId": $0] } ?? ["playlistId": playlistId ?? ""]
+        _ = try await call("like/" + rating, ["target": target])
+    }
+
+    func subscribe(_ channelID: String, _ on: Bool) async throws {
+        _ = try await call(on ? "subscription/subscribe" : "subscription/unsubscribe", ["channelIds": [channelID]])
+    }
+
+    /// What YouTube suggests while you type, your own past searches first.
+    func searchSuggestions(_ input: String) async throws -> [String] {
+        let json = try await call("music/get_search_suggestions", ["input": input])
+        return YTParse.findAll("searchEndpoint", in: json).compactMap { $0["query"] as? String }
+    }
 
     /// Puts a song in your YouTube history, which is what Home's "Listen again" and
     /// your recommendations are built from. Streams played through yt-dlp aren't
@@ -305,7 +343,8 @@ enum YTParse {
             duration = s
         }
         return Song(id: videoId, title: title, artist: artist, album: album, albumID: albumID,
-                    artistID: artistID, duration: duration, artwork: thumbnail(r["thumbnail"]).url)
+                    artistID: artistID, duration: duration, artwork: thumbnail(r["thumbnail"]).url,
+                    setVideoId: dig(r, "playlistItemData", "playlistSetVideoId") as? String)
     }
 
     /// Songs of a radio queue (playlistPanelVideoRenderer), from the `next` endpoint.
@@ -407,14 +446,19 @@ enum YTParse {
             ?? first("musicDetailHeaderRenderer", in: json)
             ?? first("musicImmersiveHeaderRenderer", in: json)
             ?? first("musicVisualHeaderRenderer", in: json)) as? JSON ?? [:]
-        let title = text(header["title"])
+        // History and library songs come without a header.
+        let named = ["FEmusic_history": "History", "FEmusic_liked_videos": "Songs"]
+        let title = named[id] ?? text(header["title"])
         let strap = text(header["straplineTextOne"])
         let subtitle = strap.isEmpty ? text(header["subtitle"]) : strap
         let art = thumbnail(header["thumbnail"] ?? header["foregroundThumbnail"]).url
         let mainShelf = findAll("musicPlaylistShelfRenderer", in: json).first
             ?? findAll("musicShelfRenderer", in: json).first { !isSuggestionShelf($0) }
         let suggestionShelf = findAll("musicShelfRenderer", in: json).first(where: isSuggestionShelf)
-        var list = mainShelf.map(songs) ?? []
+        // History comes as one shelf per day (Today, Yesterday, ...).
+        var list = id == "FEmusic_history"
+            ? findAll("musicShelfRenderer", in: json).flatMap(songs)
+            : mainShelf.map(songs) ?? []
         // Album tracks come without cover or album name; fill them from the header.
         if id.hasPrefix("MPRE") {
             list = list.map { s in
@@ -426,6 +470,18 @@ enum YTParse {
         }
         var data = PageData(id: id, title: title, subtitle: subtitle, artwork: art, songs: list)
         data.suggestions = suggestionShelf.map(songs)
+        data.owned = first("playlistEditorEndpoint", in: json) != nil
+        // The header's bookmark button saves an album or someone else's playlist.
+        if let save = findAll("toggleButtonRenderer", in: header).first(where: {
+            dig($0, "defaultServiceEndpoint", "likeEndpoint", "target", "playlistId") != nil
+        }) {
+            data.saveID = dig(save, "defaultServiceEndpoint", "likeEndpoint", "target", "playlistId") as? String
+            data.saved = save["isToggled"] as? Bool
+        }
+        if let subscribe = first("subscribeButtonRenderer", in: json) as? JSON {
+            data.channelID = subscribe["channelId"] as? String
+            data.subscribed = subscribe["subscribed"] as? Bool
+        }
         if id.hasPrefix("UC") {
             data.shelves = shelves(json)
             data.allSongsID = mainShelf.flatMap { dig($0, "bottomEndpoint", "browseEndpoint", "browseId") as? String }

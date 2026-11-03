@@ -11,6 +11,8 @@ struct Song: Identifiable, Hashable, Codable {
     var artistID: String?
     let duration: TimeInterval
     var artwork: URL?
+    /// This row's own id within a playlist, which removing it needs.
+    var setVideoId: String?
 
     var hue: Double { Double(id.stableHash % 1000) / 1000 }
     /// Fake playback needs a length even when YouTube didn't send one (Home items).
@@ -62,7 +64,7 @@ struct HomeShelf: Identifiable, Codable {
 
 struct PageData: Codable {
     let id: String
-    let title: String
+    var title: String
     let subtitle: String
     let artwork: URL?
     var songs: [Song]
@@ -72,6 +74,14 @@ struct PageData: Codable {
     var shelves: [HomeShelf]?
     /// The playlist holding all of an artist's songs.
     var allSongsID: String?
+    /// Your own playlist, which you can rename, delete and remove songs from.
+    var owned: Bool?
+    /// What Save adds to your library (an album's or playlist's playlistId), and whether it's in.
+    var saveID: String?
+    var saved: Bool?
+    /// An artist's channel, and whether you're subscribed.
+    var channelID: String?
+    var subscribed: Bool?
 }
 
 struct LyricLine: Hashable, Codable {
@@ -80,7 +90,7 @@ struct LyricLine: Hashable, Codable {
 }
 
 enum Route: Hashable {
-    case home, search, liked, savedAlbums, settings
+    case home, search, liked, library, history, settings
     case page(String)
 }
 

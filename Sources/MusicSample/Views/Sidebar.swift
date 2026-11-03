@@ -13,19 +13,32 @@ struct SidebarView: View {
                 SidebarRow(route: .liked, onDrop: { library.like($0) }) {
                     Label("Liked Songs", systemImage: "heart.fill")
                 }
-                SidebarRow(route: .savedAlbums) { Label("Saved Albums", systemImage: "square.stack") }
+                SidebarRow(route: .library) { Label("Library", systemImage: "books.vertical") }
+                SidebarRow(route: .history) { Label("History", systemImage: "clock.arrow.circlepath") }
             }
 
-            Section("Playlists") {
-                ForEach(library.playlists) { p in
-                    SidebarRow(route: .page(p.id), onDrop: { library.add($0, to: p.id) }) {
-                        Label {
-                            Text(p.title)
-                        } icon: {
-                            Artwork(hue: p.hue, url: p.artwork, side: 18, radius: 4, symbol: nil)
-                        }
+            // Its own heading, not a section header: the system's collapse arrow, which
+            // appears on hover, kept pushing the + aside.
+            HStack {
+                Text("Playlists").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+                Spacer()
+                Button { router.newPlaylist(library) } label: { Image(systemName: "plus") }
+                    .buttonStyle(.borderless)
+                    .foregroundStyle(.secondary)
+                    .help("New playlist")
+            }
+            .padding(.top, 10)
+            .padding(.leading, 10)
+            .selectionDisabled()
+            ForEach(library.playlists) { p in
+                SidebarRow(route: .page(p.id), onDrop: { library.add($0, to: p.id) }) {
+                    Label {
+                        Text(p.title)
+                    } icon: {
+                        Artwork(hue: p.hue, url: p.artwork, side: 18, radius: 4, symbol: nil)
                     }
                 }
+                .contextMenu { Button("Copy Link") { library.copyLink(p.id) } }
             }
         }
         .listStyle(.sidebar)

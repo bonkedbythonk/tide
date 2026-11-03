@@ -52,6 +52,7 @@ struct SongListView: View {
     @FocusState private var filterFocused: Bool
     @State private var appeared = false
     @State private var anchor: String?
+    @State private var confirmDelete = false
 
     private var items: [SongRowItem] {
         var seen = Set<String>()
@@ -77,13 +78,11 @@ struct SongListView: View {
         let suggestions = suggestionItems
         let visibleSongs = rows.map(\.song)
         let suggestedSongs = suggestions.map(\.song)
-        // A List, not a lazy stack: it recycles rows like a table, so flinging through
-        // hundreds of songs only updates rows that already exist.
-        List {
+        // A lazy stack, not a List: the List measured every row as a page opened, which
+        // froze Tide for seconds on long lists like Liked Songs and History.
+        ScrollView {
+          LazyVStack(alignment: .leading, spacing: 0) {
             header(visibleSongs)
-                .listRowInsets(EdgeInsets())
-                .listRowBackground(Color.clear)
-                .listRowSeparator(.hidden)
             ForEach(Array(rows.enumerated()), id: \.element.id) { index, item in
                 row(item, in: rows, playlist: visibleSongs, suggested: suggestedSongs)
                     .modifier(PanelRow(index: index, count: rows.count, on: wallpaper.isActive))
@@ -93,9 +92,7 @@ struct SongListView: View {
                     .font(.title3.bold())
                     .padding(.top, 22)
                     .padding(.bottom, 6)
-                    .listRowInsets(EdgeInsets(top: 0, leading: 32, bottom: 0, trailing: 32))
-                    .listRowBackground(Color.clear)
-                    .listRowSeparator(.hidden)
+                    .padding(.horizontal, 32)
                 ForEach(Array(suggestions.enumerated()), id: \.element.id) { index, item in
                     row(item, in: suggestions, playlist: visibleSongs, suggested: suggestedSongs)
                         .modifier(PanelRow(index: index, count: suggestions.count, on: wallpaper.isActive))
@@ -107,14 +104,10 @@ struct SongListView: View {
                     ShelfContent(shelf: shelf)
                 }
                 .padding(.top, 22)
-                .listRowInsets(EdgeInsets())
-                .listRowBackground(Color.clear)
-                .listRowSeparator(.hidden)
             }
+          }
+          .padding(.bottom, 20)
         }
-        .listStyle(.plain)
-        .scrollContentBackground(.hidden)
-        .environment(\.defaultMinListRowHeight, 1)
         .opacity(appeared ? 1 : 0)
         .offset(y: appeared ? 0 : 8)
         .onAppear {
@@ -186,6 +179,50 @@ struct SongListView: View {
                         }
                         .buttonStyle(PillButtonStyle(prominent: false))
                     }
+                    if page.channelID != nil {
+                        let on = page.subscribed ?? false
+                        Button { library.toggleSubscribed(page.id) } label: {
+                            Label(on ? "Subscribed" : "Subscribe", systemImage: on ? "checkmark" : "person.badge.plus")
+                                .contentTransition(.symbolEffect(.replace))
+                        }
+                        .buttonStyle(PillButtonStyle(prominent: false))
+                    }
+                    if page.saveID != nil, page.owned != true {
+                        let on = page.saved ?? false
+                        Button { library.toggleSaved(page.id) } label: {
+                            Label(on ? "Saved" : "Save", systemImage: on ? "bookmark.fill" : "bookmark")
+                                .contentTransition(.symbolEffect(.replace))
+                        }
+                        .buttonStyle(PillButtonStyle(prominent: false))
+                    }
+                    if ["VL", "MPRE", "UC"].contains(where: page.id.hasPrefix) {
+                        Menu {
+                            Button("Copy Link") { library.copyLink(page.id) }
+                            if page.owned == true, page.id != Library.likedID {
+                                Divider()
+                                Button("Rename…") {
+                                    router.prompt = TextPrompt(title: "Rename Playlist", button: "Rename", text: page.title) {
+                                        library.renamePlaylist(page.id, to: $0)
+                                    }
+                                }
+                                Button("Delete Playlist…", role: .destructive) { confirmDelete = true }
+                            }
+                        } label: {
+                            Image(systemName: "ellipsis")
+                        }
+                        .menuStyle(.button)
+                        .menuIndicator(.hidden)
+                        .buttonStyle(PillButtonStyle(prominent: false))
+                        .fixedSize()
+                        .confirmationDialog("Delete \(page.title)?", isPresented: $confirmDelete) {
+                            Button("Delete", role: .destructive) {
+                                library.deletePlaylist(page.id)
+                                router.goBack()
+                            }
+                        } message: {
+                            Text("It's removed from your YouTube Music account.")
+                        }
+                    }
                     do {
                         Menu {
                             Picker("Sort by", selection: $sortOrder) {
@@ -247,16 +284,43 @@ struct SongListView: View {
     }
 }
 
-struct SavedAlbumsView: View {
+/// Your library: playlists, saved albums, artists you listen to, and songs you added.
+struct LibraryView: View {
+    enum Tab: Hashable { case playlists, albums, artists, songs }
+
     @Environment(Library.self) private var library
+    @State private var tab = Tab.playlists
 
     var body: some View {
-        ScrollView {
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 170), spacing: 20)], alignment: .leading, spacing: 24) {
-                ForEach(library.savedAlbums) { MediaItemCard(item: $0) }
+        VStack(spacing: 0) {
+            HStack {
+                Text("Library").font(.system(size: 34, weight: .bold))
+                Spacer()
+                PillSwitch(options: [("Playlists", .playlists), ("Albums", .albums), ("Artists", .artists), ("Songs", .songs)],
+                           selection: $tab)
             }
-            .padding(24)
+            .padding(.horizontal, 24)
+            .padding(.top, 56)
+            .padding(.bottom, 8)
+            Group {
+                if tab == .songs {
+                    PageView(id: Library.librarySongsID)
+                } else {
+                ScrollView {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 170), spacing: 20)], alignment: .leading, spacing: 24) {
+                        ForEach(tab == .playlists ? library.playlists : tab == .albums ? library.savedAlbums : library.libraryArtists) {
+                            MediaItemCard(item: $0)
+                        }
+                    }
+                    .padding(24)
+                }
+                }
+            }
+            .id(tab)
+            .transition(.opacity.combined(with: .offset(y: 8)))
         }
+        .animation(.snappy(duration: 0.25), value: tab)
+        .task(id: tab) { if tab == .artists, library.libraryArtists.isEmpty { await library.loadLibraryArtists() } }
     }
 }
 
@@ -266,21 +330,67 @@ struct SearchView: View {
     @State private var query = ""
     @State private var shelves: [HomeShelf] = []
     @State private var searching = false
+    @State private var suggestions: [String] = []
+    /// The search last picked or submitted; suggestions stay hidden while it's in the field.
+    @State private var chosen: String?
+    @State private var recent = Prefs.strings("recentSearches")
     @FocusState private var focused: Bool
+
+    /// Recent searches while the field is empty, YouTube's suggestions while typing.
+    private var hints: [String] {
+        if query.isEmpty { return Array(recent.prefix(6)) }
+        return query == chosen ? [] : Array(suggestions.prefix(6))
+    }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 26) {
-                HStack {
-                    Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                    TextField("Songs, albums, artists", text: $query)
-                        .textFieldStyle(.plain)
-                        .focused($focused)
-                    if searching { ProgressView().controlSize(.small) }
+                VStack(alignment: .leading, spacing: 0) {
+                    HStack {
+                        Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                        TextField("Songs, albums, artists", text: $query)
+                            .textFieldStyle(.plain)
+                            .focused($focused)
+                            .onSubmit { choose(query) }
+                        if searching { ProgressView().controlSize(.small) }
+                    }
+                    .font(.title2)
+                    .padding(12)
+                    if focused, !hints.isEmpty {
+                        Divider().padding(.horizontal, 12)
+                        ForEach(hints, id: \.self) { hint in
+                            Button { choose(hint) } label: {
+                                HStack(spacing: 10) {
+                                    Image(systemName: query.isEmpty ? "clock.arrow.circlepath" : "magnifyingglass")
+                                        .foregroundStyle(.secondary)
+                                        .frame(width: 20)
+                                    Text(hint)
+                                    Spacer()
+                                }
+                                .padding(.vertical, 7)
+                                .padding(.horizontal, 12)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .modifier(HoverHighlight())
+                        }
+                        .padding(.horizontal, 4)
+                        if query.isEmpty {
+                            Button("Clear recent searches") {
+                                recent = []
+                                Prefs.set(recent, "recentSearches")
+                            }
+                            .buttonStyle(.borderless)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 8)
+                        }
+                    }
                 }
-                .font(.title2)
-                .padding(12)
                 .background(RoundedRectangle(cornerRadius: 10).fill(Color.primary.opacity(0.06)))
+                .animation(.snappy(duration: 0.2), value: hints)
+                .animation(.snappy(duration: 0.2), value: focused)
                 .padding(.horizontal, 24)
 
                 ForEach(shelves) { shelf in
@@ -301,9 +411,16 @@ struct SearchView: View {
         }
         .task(id: query) {
             let q = query.trimmingCharacters(in: .whitespaces)
-            guard !q.isEmpty else { shelves = []; searching = false; return }
-            // Five requests per search, so wait for a pause in typing.
-            try? await Task.sleep(for: .milliseconds(350))
+            guard !q.isEmpty else { shelves = []; searching = false; suggestions = []; return }
+            if query != chosen {
+                try? await Task.sleep(for: .milliseconds(120))
+                guard !Task.isCancelled else { return }
+                suggestions = await library.searchSuggestions(q)
+                guard !Task.isCancelled else { return }
+            }
+            // Five requests per search, so wait for a pause in typing (the suggestions
+            // above already took part of it). A picked search goes at once.
+            if query != chosen { try? await Task.sleep(for: .milliseconds(230)) }
             guard !Task.isCancelled else { return }
             searching = true
             defer { searching = false }
@@ -311,6 +428,16 @@ struct SearchView: View {
             guard !Task.isCancelled else { return }
             shelves = result
         }
+    }
+
+    /// Searches for `text` and remembers it among your recent searches.
+    private func choose(_ text: String) {
+        let q = text.trimmingCharacters(in: .whitespaces)
+        guard !q.isEmpty else { return }
+        chosen = q
+        query = q
+        recent = [q] + recent.filter { $0.caseInsensitiveCompare(q) != .orderedSame }.prefix(9)
+        Prefs.set(recent, "recentSearches")
     }
 }
 
@@ -391,8 +518,12 @@ struct SongRow: View {
                 // controls (and +'s popover) only exist while needed: hundreds of idle
                 // buttons made long playlists slow to scroll.
                 HStack(spacing: 12) {
-                    if hovering || pickerOpen || library.isLiked(item.id) {
+                    if hovering || pickerOpen {
                         LikeButton(songID: item.id)
+                    } else if library.isLiked(item.id) {
+                        // A plain heart until hovered: on Liked Songs every row has one, and
+                        // a real button in each made the page slow to open.
+                        Image(systemName: "heart.fill").foregroundStyle(Color.pink).frame(width: 16)
                     } else {
                         Color.clear.frame(width: 16)
                     }
@@ -417,6 +548,8 @@ struct SongRow: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
+        // One known height, so the list doesn't have to measure every row as it opens.
+        .frame(height: 52)
         .background {
             // Neutral washes, not the system blue, which clashed on the dark panel.
             RoundedRectangle(cornerRadius: 8, style: .continuous).fill(
@@ -446,9 +579,9 @@ private struct PanelRow: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .listRowInsets(EdgeInsets(top: 1, leading: 24, bottom: 1, trailing: 24))
-            .listRowSeparator(.hidden)
-            .listRowBackground(
+            .padding(.vertical, 1)
+            .padding(.horizontal, 24)
+            .background(
                 Group {
                     if on {
                         UnevenRoundedRectangle(

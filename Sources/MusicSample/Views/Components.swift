@@ -103,6 +103,7 @@ struct StandaloneAddButton: View {
 
 struct PlaylistPicker: View {
     @Environment(Library.self) private var library
+    @Environment(Router.self) private var router
     let songIDs: [String]
     let done: () -> Void
     @State private var query = ""
@@ -123,6 +124,21 @@ struct PlaylistPicker: View {
                 .onSubmit { if let first = filtered.first { choose(first) } }
             ScrollView {
                 LazyVStack(spacing: 0) {
+                    Button {
+                        router.newPlaylist(library, with: library.songs(songIDs), name: query)
+                        done()
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: "plus").frame(width: 26, height: 26)
+                            Text("New Playlist…")
+                            Spacer()
+                        }
+                        .padding(.vertical, 4)
+                        .padding(.horizontal, 6)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .modifier(HoverHighlight())
                     ForEach(filtered) { p in
                         Button { choose(p) } label: {
                             HStack(spacing: 8) {
@@ -147,7 +163,7 @@ struct PlaylistPicker: View {
                     }
                 }
             }
-            .frame(height: min(CGFloat(filtered.count) * 36 + 4, 300))
+            .frame(height: min(CGFloat(filtered.count + 1) * 36 + 4, 300))
         }
         .padding(10)
         .frame(width: 280)
@@ -237,6 +253,8 @@ struct SongMenu: View {
     @Environment(Router.self) private var router
     let songs: [Song]
     var playlistID: String?
+    /// The row's place in Up Next, for the queue's own menu.
+    var upNextIndex: Int?
 
     var body: some View {
         let ids = songs.map(\.id)
@@ -245,15 +263,35 @@ struct SongMenu: View {
         }
         Button("Play Next") { player.playNext(songs) }
         Button("Add to Queue") { player.addToQueue(songs) }
+        if let upNextIndex {
+            Button("Remove from Up Next") {
+                withAnimation(.snappy) { player.removeUpNext(at: IndexSet(integer: upNextIndex)) }
+            }
+        }
         Divider()
         Menu("Add to Playlist") {
+            Button("New Playlist…") { router.newPlaylist(library, with: songs) }
+            Divider()
             ForEach(library.playlists) { p in
                 Button(p.title) { library.add(ids, to: p.id) }
             }
         }
-        Button("Like") { library.like(ids) }
+        if ids.allSatisfy(library.isLiked) {
+            Button("Remove from Liked Songs") { library.remove(ids, from: Library.likedID) }
+        } else {
+            Button("Like") { library.like(ids) }
+        }
+        if songs.count == 1, let song = songs.first {
+            Button("Dislike") {
+                library.dislike(song)
+                if player.current?.id == song.id { player.next() }
+            }
+        }
         if let playlistID {
             Button("Remove from This Playlist") { library.remove(ids, from: playlistID) }
+        }
+        if songs.count == 1, let song = songs.first {
+            Button("Copy Link") { library.copyLink(song.id, song: true) }
         }
         if songs.count == 1, let song = songs.first, song.albumID != nil || song.artistID != nil {
             Divider()

@@ -255,7 +255,7 @@ struct QueueView: View {
             if let s = player.current {
                 Section("Now Playing") { QueueRow(song: s, current: true) }
             }
-            Section("Up Next") {
+            Section {
                 if player.upNext.isEmpty {
                     Text("Drop songs here to queue them").foregroundStyle(.secondary)
                 }
@@ -264,10 +264,16 @@ struct QueueView: View {
                     QueueRow(song: s, current: false)
                         .contentShape(Rectangle())
                         .onTapGesture { player.jump(to: player.index + 1 + i) }
-                        .contextMenu { SongMenu(songs: [s]) }
+                        .contextMenu { SongMenu(songs: [s], upNextIndex: i) }
                 }
                 .onMove { player.moveUpNext(from: $0, to: $1) }
                 .onDelete { player.removeUpNext(at: $0) }
+            } header: {
+                HStack {
+                    Text("Up Next")
+                    Spacer()
+                    UpNextActions()
+                }
             }
         }
         .listStyle(.inset)
@@ -278,6 +284,27 @@ struct QueueView: View {
             player.addToQueue(songs)
             library.showToast(songs.count == 1 ? "Added to queue" : "Added \(songs.count) songs to queue")
             return true
+        }
+    }
+}
+
+/// Save the queue as a playlist, or clear what's after the current song.
+struct UpNextActions: View {
+    @Environment(Library.self) private var library
+    @Environment(Player.self) private var player
+    @Environment(Router.self) private var router
+
+    var body: some View {
+        if !player.upNext.isEmpty {
+            HStack(spacing: 12) {
+                Button("Save as Playlist") {
+                    router.newPlaylist(library, with: (player.current.map { [$0] } ?? []) + player.upNext)
+                }
+                Button("Clear") { withAnimation(.snappy) { player.clearUpNext() } }
+            }
+            .buttonStyle(.borderless)
+            .font(.caption.weight(.medium))
+            .foregroundStyle(.secondary)
         }
     }
 }
@@ -547,7 +574,13 @@ struct NowPlayingQueue: View {
                         .padding(8)
                         .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.12)))
                 }
-                Text("Up Next").font(.headline).foregroundStyle(.secondary).padding(.horizontal, 8).padding(.top, 12)
+                HStack {
+                    Text("Up Next").font(.headline).foregroundStyle(.secondary)
+                    Spacer()
+                    UpNextActions()
+                }
+                .padding(.horizontal, 8)
+                .padding(.top, 12)
                 if player.upNext.isEmpty {
                     Text("Nothing queued").foregroundStyle(.secondary).padding(8)
                 }
@@ -558,7 +591,7 @@ struct NowPlayingQueue: View {
                         .contentShape(Rectangle())
                         .modifier(HoverHighlight())
                         .onTapGesture { player.jump(to: player.index + 1 + i) }
-                        .contextMenu { SongMenu(songs: [s]) }
+                        .contextMenu { SongMenu(songs: [s], upNextIndex: i) }
                 }
             }
             .padding(.horizontal, 12)

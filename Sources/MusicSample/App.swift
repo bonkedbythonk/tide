@@ -12,7 +12,8 @@ struct MusicSampleApp: App {
 
     /// ⌘1–⌘9: the fixed sections, then your playlists in sidebar order.
     private var goTargets: [(String, Route)] {
-        [("Home", .home), ("Search", .search), ("Liked Songs", .liked), ("Saved Albums", .savedAlbums)]
+        [("Home", .home), ("Search", .search), ("Liked Songs", .liked), ("Library", .library),
+         ("History", .history)]
             + library.playlists.map { ($0.title, Route.page($0.id)) }
     }
 
@@ -201,6 +202,17 @@ struct RootView: View {
                 CommandPalette().transition(.opacity)
             }
         }
+        .alert(router.prompt?.title ?? "", isPresented: Binding(get: { router.prompt != nil },
+                                                                set: { if !$0 { router.prompt = nil } })) {
+            TextField("Name", text: Binding(get: { router.prompt?.text ?? "" }, set: { router.prompt?.text = $0 }))
+            Button(router.prompt?.button ?? "OK") {
+                if let p = router.prompt {
+                    let text = p.text.trimmingCharacters(in: .whitespaces)
+                    if !text.isEmpty { p.done(text) }
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        }
         .sheet(isPresented: Binding(get: { router.showShortcuts }, set: { router.showShortcuts = $0 })) {
             ShortcutsSheet()
         }
@@ -254,7 +266,8 @@ struct DetailView: View {
                 switch router.current {
                 case .home: HomeView()
                 case .search: SearchView()
-                case .savedAlbums: SavedAlbumsView()
+                case .library: LibraryView()
+                case .history: PageView(id: Library.historyID)
                 case .liked: PageView(id: Library.likedID)
                 case .settings: SettingsPage()
                 case .page(let id): PageView(id: id)
@@ -274,7 +287,8 @@ struct DetailView: View {
         case .home: "Home"
         case .search: "Search"
         case .liked: "Liked Songs"
-        case .savedAlbums: "Saved Albums"
+        case .library: "Library"
+        case .history: "History"
         case .settings: "Settings"
         case .page(let id): library.pages[id]?.title ?? ""
         }

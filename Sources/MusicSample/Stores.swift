@@ -10,6 +10,7 @@ enum Prefs {
     static func int(_ key: String, _ fallback: Int) -> Int { d.object(forKey: key) as? Int ?? fallback }
     static func bool(_ key: String, _ fallback: Bool = false) -> Bool { d.object(forKey: key) as? Bool ?? fallback }
     static func string(_ key: String) -> String? { d.string(forKey: key) }
+    static func strings(_ key: String) -> [String] { d.stringArray(forKey: key) ?? [] }
     static func set(_ value: Any, _ key: String) { d.set(value, forKey: key) }
 }
 
@@ -597,6 +598,13 @@ enum SleepTimer: String, CaseIterable, Identifiable {
         queue = Array(queue[...index]) + up
     }
 
+    /// Empties Up Next; the current song keeps playing.
+    func clearUpNext() {
+        guard queue.indices.contains(index) else { return }
+        queue = [queue[index]]
+        radioSeed = current?.id
+    }
+
     /// Squared, so the slider's lower half isn't all "loud" (Pear's exponential-volume).
     private func applyVolume() { applyFade() }
 
@@ -653,8 +661,17 @@ enum SleepTimer: String, CaseIterable, Identifiable {
     }
 }
 
+/// A one-line question, such as a new playlist's name, asked over the window.
+struct TextPrompt {
+    let title: String
+    let button: String
+    var text = ""
+    let done: (String) -> Void
+}
+
 @Observable final class Router {
     var current = Route.home
+    var prompt: TextPrompt?
     var backStack: [Route] = []
     var forwardStack: [Route] = []
     var showNowPlaying = false
@@ -696,6 +713,13 @@ enum SleepTimer: String, CaseIterable, Identifiable {
         backStack.append(current)
         forwardStack.removeAll()
         current = route
+    }
+
+    /// Asks for a name, then makes the playlist with `songs` in it.
+    func newPlaylist(_ library: Library, with songs: [Song] = [], name: String = "") {
+        prompt = TextPrompt(title: "New Playlist", button: "Create", text: name) { title in
+            Task { await library.createPlaylist(title, with: songs) }
+        }
     }
 
     func openSearch() {

@@ -27,7 +27,8 @@ struct CommandPalette: View {
             Command(id: "home", label: "Home", group: "Go to", symbol: "house") { router.go(.home) },
             Command(id: "search", label: "Search", group: "Go to", symbol: "magnifyingglass") { router.openSearch() },
             Command(id: "liked", label: "Liked Songs", group: "Go to", symbol: "heart") { router.go(.liked) },
-            Command(id: "albums", label: "Saved Albums", group: "Go to", symbol: "square.stack") { router.go(.savedAlbums) },
+            Command(id: "library", label: "Library", group: "Go to", symbol: "books.vertical") { router.go(.library) },
+            Command(id: "history", label: "History", group: "Go to", symbol: "clock.arrow.circlepath") { router.go(.history) },
         ]
         list += library.playlists.map { p in
             Command(id: "p" + p.id, label: p.title, group: "Playlists", symbol: "music.note.list") { router.go(.page(p.id)) }

@@ -60,7 +60,7 @@ enum Demo {
         return PageData(id: item.id, title: item.title, subtitle: item.subtitle, artwork: item.artwork, songs: list)
     }
 
-    /// Opens on another screen for its screenshot: `-demoScreen playlist|nowplaying|settings`.
+    /// Opens on another screen for its screenshot: `-demoScreen playlist|nowplaying|settings|library`.
     static func open(_ screen: String?, router: Router) {
         switch screen {
         case "playlist": router.go(.page(playlists[0].id))
@@ -68,6 +68,7 @@ enum Demo {
             router.showNowPlaying = true
             router.panelTab = .lyrics
         case "settings": router.go(.settings)
+        case "library": router.go(.library)
         default: break
         }
     }
@@ -75,7 +76,9 @@ enum Demo {
     static var pages: [String: PageData] {
         var all: [String: PageData] = [:]
         let liked = MediaItem(id: Library.likedID, title: "Liked Music", subtitle: "Auto playlist", artwork: nil, kind: .playlist)
-        for (i, item) in ([liked] + playlists + savedAlbums).enumerated() { all[item.id] = page(item, offset: i * 5) }
+        let history = MediaItem(id: Library.historyID, title: "History", subtitle: "", artwork: nil, kind: .other)
+        let added = MediaItem(id: Library.librarySongsID, title: "Songs", subtitle: "", artwork: nil, kind: .other)
+        for (i, item) in ([liked, history, added] + playlists + savedAlbums).enumerated() { all[item.id] = page(item, offset: i * 5) }
         return all
     }
 }

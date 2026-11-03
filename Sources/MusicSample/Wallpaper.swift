@@ -88,6 +88,9 @@ import SwiftUI
     /// The wallpaper's main colour, for the sidebar, player bar and queue, so the
     /// panels and the picture share one colour instead of competing.
     private(set) var tint: Color?
+    /// A colour from the playing song's cover for the player bar's active controls;
+    /// nil for a grey cover, which keeps the system accent.
+    private(set) var coverAccent: Color?
 
     @ObservationIgnored private var coverURL: URL?
     @ObservationIgnored private var timer: Timer?
@@ -124,6 +127,14 @@ import SwiftUI
     /// Called when the playing song changes.
     func songChanged(cover: URL?) {
         coverURL = cover
+        Task.detached(priority: .utility) { [weak self] in
+            let image = if let cover { await ImageDecodeCache.shared.image(cover, maxPixelSize: 64) } else { CGImage?.none }
+            let accent = image.flatMap(Self.accent)
+            await MainActor.run { [weak self] in
+                guard let self, self.coverURL == cover else { return }
+                withAnimation(.easeInOut(duration: 0.4)) { self.coverAccent = accent }
+            }
+        }
         switch source {
         case .coverArt: refresh()
         case .pinstill where shuffle == .everySong: shuffleNow()
@@ -264,6 +275,16 @@ import SwiftUI
         return Color(hue: h, saturation: min(0.22, s * 0.8), brightness: 0.17)
     }
 
+    /// The cover's own colour, made bright and clear enough to read on the dark bar.
+    static func accent(_ image: CGImage) -> Color? {
+        let rgb = signature(image)
+        let ns = NSColor(srgbRed: rgb[0], green: rgb[1], blue: rgb[2], alpha: 1)
+        var h: CGFloat = 0, s: CGFloat = 0, v: CGFloat = 0
+        ns.getHue(&h, saturation: &s, brightness: &v, alpha: nil)
+        guard s > 0.15 else { return nil }
+        return Color(hue: h, saturation: min(0.8, max(0.5, s)), brightness: 0.95)
+    }
+
     /// Draws the image into one pixel and reads its luma.
     private static func averageBrightness(_ image: CGImage) -> Double {
         var pixel = [UInt8](repeating: 0, count: 4)
@@ -296,10 +317,60 @@ extension EnvironmentValues {
         get { self[WallpaperCanvasKey.self] }
         set { self[WallpaperCanvasKey.self] = newValue }
     }
+    /// The player bar's colour for active controls: from the cover, or the system accent.
+    @Entry var barAccent: Color = .accentColor
 }
 
-/// Background for the sidebar, player bar and queue over a wallpaper: their slice of
-/// the blurred wallpaper under a wash of its own main colour.
+/// Over a wallpaper the sidebar and main area float as rounded panels on a darker
+/// frame, like Spotify; the player bar sits on the frame.
+enum PanelStyle {
+    /// The gap around the panels, and their corners: the window's own rounding minus
+    /// that gap, so the curves run parallel.
+    static let margin: CGFloat = 8
+    static let radius: CGFloat = 14
+    static let sidebarWidth: CGFloat = 222
+    static let barHeight: CGFloat = 66
+}
+
+/// An empty, invisible toolbar makes the title bar taller, which lowers the
+/// window buttons into the sidebar panel instead of hugging the top edge.
+struct WindowButtonsLowered: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        DispatchQueue.main.async {
+            guard let window = view.window, window.toolbar == nil else { return }
+            window.toolbar = NSToolbar(identifier: "tide-window")
+            window.toolbarStyle = .unified
+            window.titleVisibility = .hidden
+            window.titlebarAppearsTransparent = true
+        }
+        return view
+    }
+
+    func updateNSView(_ view: NSView, context: Context) {}
+}
+
+/// One wallpaper behind the whole window, darkened everywhere except where
+/// the sidebar and main panels are, so both show exactly the same picture.
+struct FrameShade: View {
+    var body: some View {
+        GeometryReader { proxy in
+            let m = PanelStyle.margin, r = PanelStyle.radius
+            let height = proxy.size.height - PanelStyle.barHeight - 2 * m
+            let sidebar = CGRect(x: m, y: m, width: PanelStyle.sidebarWidth, height: height)
+            let main = CGRect(x: sidebar.maxX + m, y: m, width: proxy.size.width - sidebar.maxX - 2 * m, height: height)
+            Path { path in
+                path.addRect(CGRect(origin: .zero, size: proxy.size))
+                path.addRoundedRect(in: sidebar, cornerSize: CGSize(width: r, height: r), style: .continuous)
+                path.addRoundedRect(in: main, cornerSize: CGSize(width: r, height: r), style: .continuous)
+            }
+            .fill(Color.black.opacity(0.5), style: FillStyle(eoFill: true))
+        }
+    }
+}
+
+/// A card over the wallpaper (Now Playing's queue and lyrics): its slice of the
+/// blurred wallpaper under a wash of its own main colour, so text stays readable.
 struct PanelBackground: View {
     @Environment(WallpaperStore.self) private var wallpaper
 

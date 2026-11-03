@@ -92,7 +92,8 @@ struct RootView: View {
 
     private var content: some View {
         ZStack {
-            WallpaperBackground()
+            // Floating draws the wallpaper once behind the window instead (FrameShade).
+            if !wallpaper.isActive { WallpaperBackground() }
             DetailView()
                 .environment(\.colorScheme, wallpaper.isActive ? .dark : colorScheme)
             if router.showNowPlaying {
@@ -129,21 +130,20 @@ struct RootView: View {
         VStack(spacing: 0) {
             Group {
                 if wallpaper.isActive {
-                    // Over a wallpaper: our own side-by-side layout. The system split
-                    // view draws a divider seam that can't be styled away.
+                    // Over a wallpaper: our own side-by-side layout of floating panels (the
+                    // system split view draws a divider seam that can't be styled away).
+                    // The panels are see-through; FrameShade behind them darkens the rest.
                     HStack(spacing: 0) {
                         SidebarView()
-                            .frame(width: 230)
-                            .background {
-                                PanelBackground().ignoresSafeArea()
-                            }
+                            .frame(width: PanelStyle.sidebarWidth)
+                            .padding([.leading, .top, .bottom], PanelStyle.margin)
+                            // Up to the window's top edge, window buttons inside the panel.
+                            .ignoresSafeArea(.container, edges: .top)
                             .environment(\.colorScheme, .dark)
-                        // A quiet 1-pt hairline, as in anicat: the text colour at 10%.
-                        Rectangle()
-                            .fill(Color.white.opacity(0.10))
-                            .frame(width: 1)
-                            .ignoresSafeArea()
                         content
+                            .clipShape(RoundedRectangle(cornerRadius: PanelStyle.radius, style: .continuous))
+                            .padding(PanelStyle.margin)
+                            .ignoresSafeArea(.container, edges: .top)
                     }
                 } else {
                     NavigationSplitView {
@@ -156,6 +156,18 @@ struct RootView: View {
             }
             if !wallpaper.isActive { Divider() }
             PlayerBar()
+        }
+        .background {
+            // The one wallpaper for the whole window, darkened outside the panels.
+            if wallpaper.isActive {
+                ZStack {
+                    WallpaperBackground()
+                    FrameShade()
+                    WindowButtonsLowered()
+                }
+                // Into the title-bar strip too, which otherwise showed lighter.
+                .ignoresSafeArea()
+            }
         }
         .background {
             // Reports the window's size so every wallpaper slice lines up.
@@ -220,6 +232,7 @@ struct RootView: View {
             swipe.install(router: router, player: player)
             KeyboardShortcuts.install(player: player, router: router)
             player.radio = { [library] in await library.radio(after: $0) }
+            player.latest = { [library] in library.song($0) }
             player.reportPlay = { [library] in await library.client.addToHistory($0.id) }
             if Demo.isOn { Demo.open(UserDefaults.standard.string(forKey: "demoScreen"), router: router) }
         }

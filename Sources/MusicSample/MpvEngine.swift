@@ -138,7 +138,9 @@ final class MpvEngine {
     /// Puts a video picture on the track that's already playing; the audio carries on.
     func addVideo(_ url: URL) {
         set("vid", "auto")
-        command(["video-add", url.absoluteString, "select"])
+        // Async: video-add opens the stream before returning, which held up the
+        // whole window while it connected.
+        command(["video-add", url.absoluteString, "select"], async: true)
     }
 
     func hideVideo() { set("vid", "no") }
@@ -155,13 +157,13 @@ final class MpvEngine {
         return mpv_set_property_string(mpv, property, value) >= 0
     }
 
-    func command(_ args: [String]) {
+    func command(_ args: [String], async: Bool = false) {
         guard let mpv else { return }
         var cargs = args.map { strdup($0) } + [nil]
         defer { cargs.forEach { free($0) } }
         cargs.withUnsafeMutableBufferPointer { buffer in
             buffer.baseAddress!.withMemoryRebound(to: UnsafePointer<CChar>?.self, capacity: buffer.count) {
-                _ = mpv_command(mpv, $0)
+                _ = async ? mpv_command_async(mpv, 0, $0) : mpv_command(mpv, $0)
             }
         }
     }

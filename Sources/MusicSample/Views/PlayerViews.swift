@@ -15,16 +15,16 @@ struct PlayerBar: View {
             PlayerExtras().frame(width: 320, alignment: .trailing)
         }
         .padding(.horizontal, 16)
-        .frame(height: 76)
-        .background {
-            if wallpaper.isActive {
-                // Its slice of the wallpaper, under the same bar material.
-                PanelBackground()
-            } else {
-                Rectangle().fill(.bar)
-            }
-        }
+        // Over a wallpaper the panels' gap is already above the bar, so the same gap
+        // goes below it and the controls sit midway.
+        .padding(.bottom, wallpaper.isActive ? PanelStyle.margin : 0)
+        .frame(height: wallpaper.isActive ? PanelStyle.barHeight : 76)
+        // Over a wallpaper it sits on the window's dark frame, like Spotify's.
+        .background { if !wallpaper.isActive { Rectangle().fill(.bar) } }
         .environment(\.colorScheme, wallpaper.isActive ? .dark : colorScheme)
+        // Active buttons, the progress bar and volume take the playing song's cover colour.
+        .environment(\.barAccent, wallpaper.coverAccent ?? .accentColor)
+        .tint(wallpaper.coverAccent ?? .accentColor)
         // Clicking anywhere on the bar that isn't a control opens or closes Now Playing.
         .contentShape(Rectangle())
         .onTapGesture {
@@ -66,6 +66,7 @@ struct NowPlayingInfo: View {
                 }
                 .id(s.id)
                 .transition(.push(from: player.skipForward ? .trailing : .leading))
+                .contextMenu { SongMenu(songs: [s]) }
                 Spacer(minLength: 4)
                 LikeButton(songID: s.id)
                 StandaloneAddButton(songIDs: [s.id])
@@ -83,6 +84,7 @@ struct NowPlayingInfo: View {
 }
 
 struct TransportControls: View {
+    @Environment(\.barAccent) private var accent
     @Environment(Player.self) private var player
 
     var body: some View {
@@ -93,7 +95,7 @@ struct TransportControls: View {
             HStack(spacing: 24) {
                 Button { player.shuffle.toggle() } label: {
                     Image(systemName: "shuffle")
-                        .foregroundStyle(player.shuffle ? Color.accentColor : Color.secondary)
+                        .foregroundStyle(player.shuffle ? accent : Color.secondary)
                 }
                 .help("Shuffle")
                 Button(action: player.previous) { Image(systemName: "backward.fill").font(.title3) }
@@ -105,7 +107,7 @@ struct TransportControls: View {
                 Button(action: player.next) { Image(systemName: "forward.fill").font(.title3) }
                 Button(action: player.cycleRepeat) {
                     Image(systemName: player.repeatMode == .one ? "repeat.1" : "repeat")
-                        .foregroundStyle(player.repeatMode == .off ? Color.secondary : Color.accentColor)
+                        .foregroundStyle(player.repeatMode == .off ? Color.secondary : accent)
                 }
                 .help("Repeat")
             }
@@ -128,6 +130,7 @@ struct TransportControls: View {
 }
 
 struct PlayerExtras: View {
+    @Environment(\.barAccent) private var accent
     @Environment(Player.self) private var player
     @Environment(Router.self) private var router
 
@@ -136,7 +139,7 @@ struct PlayerExtras: View {
         HStack(spacing: 14) {
             Button { player.videoMode.toggle() } label: {
                 Image(systemName: player.videoMode ? "play.rectangle.fill" : "play.rectangle")
-                    .foregroundStyle(player.videoMode ? Color.accentColor : Color.secondary)
+                    .foregroundStyle(player.videoMode ? accent : Color.secondary)
             }
             .help(player.videoMode ? "Switch to song" : "Switch to music video")
             .disabled(player.current == nil)
@@ -148,6 +151,16 @@ struct PlayerExtras: View {
             }
             panelButton("quote.bubble", tab: .lyrics, help: "Lyrics")
             panelButton("list.bullet", tab: .queue, help: "Up Next")
+            Button { player.discordPresence.toggle() } label: {
+                Image(nsImage: DiscordLogo.image)
+                    .renderingMode(.template)
+                    .resizable()
+                    .scaledToFit()
+                    // Measured against the symbols beside it: about 15 pt wide, 12 tall.
+                    .frame(width: 15, height: 15)
+                    .foregroundStyle(player.discordPresence ? accent : Color.secondary)
+            }
+            .help(player.discordPresence ? "Showing what's playing on Discord" : "Not showing on Discord")
             PopoverButton(symbol: "slider.vertical.3", help: "Sound") { SoundPopover() }
             HStack(spacing: 6) {
                 Image(systemName: player.volume == 0 ? "speaker.slash.fill" : "speaker.wave.2.fill")
@@ -168,13 +181,14 @@ struct PlayerExtras: View {
                 router.togglePanel(tab)
             }
         } label: {
-            Image(systemName: symbol).foregroundStyle(active ? Color.accentColor : Color.secondary)
+            Image(systemName: symbol).foregroundStyle(active ? accent : Color.secondary)
         }
         .help(help)
     }
 }
 
 struct PopoverButton<Content: View>: View {
+    @Environment(\.barAccent) private var accent
     let symbol: String
     let help: String
     @ViewBuilder let content: Content
@@ -182,7 +196,7 @@ struct PopoverButton<Content: View>: View {
 
     var body: some View {
         Button { open.toggle() } label: {
-            Image(systemName: symbol).foregroundStyle(open ? Color.accentColor : Color.secondary)
+            Image(systemName: symbol).foregroundStyle(open ? accent : Color.secondary)
         }
         .help(help)
         .popover(isPresented: $open, arrowEdge: .top) { content }
@@ -241,8 +255,8 @@ struct SidePanelView: View {
             case .lyrics: LyricsView(fontSize: 20)
             }
         }
-        // Over a wallpaper it's dark like the sidebar and player bar, whatever the system look.
-        .background { if wallpaper.isActive { PanelBackground().ignoresSafeArea() } }
+        // Over a wallpaper: inside the main panel, the window's wallpaper a touch darker.
+        .background { if wallpaper.isActive { Color.black.opacity(0.2).ignoresSafeArea() } }
     }
 }
 
@@ -467,6 +481,7 @@ struct NowPlayingView: View {
                             }
                         }
                         .id("\(s.id)-\(player.videoMode)")
+                        .contextMenu { SongMenu(songs: [s]) }
                         .transition(.push(from: player.skipForward ? .trailing : .leading))
                         .scaleEffect(appeared ? 1 : 0.85)
                         .opacity(appeared ? 1 : 0)
@@ -484,6 +499,7 @@ struct NowPlayingView: View {
                             }
                             .font(.title3).foregroundStyle(.secondary).lineLimit(1)
                         }
+                        .contextMenu { SongMenu(songs: [s]) }
                         .id(s.id)
                         .transition(.opacity)
                         HStack(spacing: 18) {

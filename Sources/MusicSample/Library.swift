@@ -320,11 +320,15 @@ import SwiftUI
                    let row = d["setVideoId"] as? String { rowIDs[v] = row }
             }
         }
-        pages[playlistID]?.songs = pages[playlistID]?.songs.map { s in
+        // Read, then write: reading pages inside its own assignment crashed Tide
+        // (two overlapping accesses to one property).
+        guard let current = pages[playlistID]?.songs else { return keep(playlistID) }
+        let updated = current.map { s in
             var s = s
             if s.setVideoId == nil { s.setVideoId = rowIDs[s.id] }
             return s
-        } ?? []
+        }
+        pages[playlistID]?.songs = updated
         keep(playlistID)
     }
 

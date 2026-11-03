@@ -83,6 +83,9 @@ struct SongListView: View {
         ScrollView {
           LazyVStack(alignment: .leading, spacing: 0) {
             header(visibleSongs)
+            if page.id.hasPrefix("UC"), !rows.isEmpty {
+                Text("Top songs").font(.title3.bold()).padding(.horizontal, 32).padding(.bottom, 10)
+            }
             ForEach(Array(rows.enumerated()), id: \.element.id) { index, item in
                 row(item, in: rows, playlist: visibleSongs, suggested: suggestedSongs)
                     .modifier(PanelRow(index: index, count: rows.count, on: wallpaper.isActive))
@@ -160,7 +163,10 @@ struct SongListView: View {
                 .opacity(appeared ? 1 : 0)
             VStack(alignment: .leading, spacing: 6) {
                 Text(page.title).font(.system(size: 34, weight: .bold)).lineLimit(1)
-                Text([page.subtitle, "\(visible.count) songs", minutes > 0 ? "\(minutes) min" : ""]
+                // An artist page lists only their top songs, so a count would mislead.
+                let isArtist = page.id.hasPrefix("UC")
+                Text([page.subtitle, isArtist ? "" : "\(visible.count) songs",
+                      !isArtist && minutes > 0 ? "\(minutes) min" : ""]
                     .filter { !$0.isEmpty }.joined(separator: " • "))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -336,10 +342,9 @@ struct SearchView: View {
     @State private var recent = Prefs.strings("recentSearches")
     @FocusState private var focused: Bool
 
-    /// Recent searches while the field is empty, YouTube's suggestions while typing.
+    /// YouTube's suggestions while typing (recent searches show on the page itself).
     private var hints: [String] {
-        if query.isEmpty { return Array(recent.prefix(6)) }
-        return query == chosen ? [] : Array(suggestions.prefix(6))
+        query.isEmpty || query == chosen ? [] : Array(suggestions.prefix(6))
     }
 
     var body: some View {
@@ -361,7 +366,7 @@ struct SearchView: View {
                         ForEach(hints, id: \.self) { hint in
                             Button { choose(hint) } label: {
                                 HStack(spacing: 10) {
-                                    Image(systemName: query.isEmpty ? "clock.arrow.circlepath" : "magnifyingglass")
+                                    Image(systemName: "magnifyingglass")
                                         .foregroundStyle(.secondary)
                                         .frame(width: 20)
                                     Text(hint)
@@ -375,17 +380,6 @@ struct SearchView: View {
                             .modifier(HoverHighlight())
                         }
                         .padding(.horizontal, 4)
-                        if query.isEmpty {
-                            Button("Clear recent searches") {
-                                recent = []
-                                Prefs.set(recent, "recentSearches")
-                            }
-                            .buttonStyle(.borderless)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 8)
-                        }
                     }
                 }
                 .background(RoundedRectangle(cornerRadius: 10).fill(Color.primary.opacity(0.06)))
@@ -393,6 +387,46 @@ struct SearchView: View {
                 .animation(.snappy(duration: 0.2), value: focused)
                 .padding(.horizontal, 24)
 
+                if query.isEmpty {
+                    if !recent.isEmpty {
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack {
+                                Text("Recent searches").font(.title2.bold())
+                                Spacer()
+                                Button("Clear") {
+                                    withAnimation(.snappy) { recent = [] }
+                                    Prefs.set(recent, "recentSearches")
+                                }
+                                .buttonStyle(PillButtonStyle(prominent: false))
+                            }
+                            .padding(.horizontal, 24)
+                            ForEach(recent.prefix(8), id: \.self) { past in
+                                Button { choose(past) } label: {
+                                    HStack(spacing: 10) {
+                                        Image(systemName: "clock.arrow.circlepath").foregroundStyle(.secondary).frame(width: 20)
+                                        Text(past)
+                                        Spacer()
+                                    }
+                                    .padding(.vertical, 7)
+                                    .padding(.horizontal, 12)
+                                    .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+                                .modifier(HoverHighlight())
+                                .padding(.horizontal, 12)
+                            }
+                        }
+                    }
+                    // History lists a song each time it was played; show it once.
+                    var seen = Set<String>()
+                    let played = (library.pages[Library.historyID]?.songs ?? []).filter { seen.insert($0.id).inserted }
+                    if !played.isEmpty {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text("Recently played").font(.title2.bold()).padding(.horizontal, 24)
+                            SongGrid(songs: Array(played.prefix(12)))
+                        }
+                    }
+                }
                 ForEach(shelves) { shelf in
                     VStack(alignment: .leading, spacing: 12) {
                         Text(shelf.title).font(.title2.bold()).padding(.horizontal, 24)
@@ -405,6 +439,7 @@ struct SearchView: View {
         }
         // On appear and on every / or ⌘K. The short wait lets the field join the
         // window first; focusing it before that does nothing.
+        .task { _ = await library.page(Library.historyID) }
         .task(id: router.searchFocusRequest) {
             try? await Task.sleep(for: .milliseconds(30))
             focused = true
@@ -580,6 +615,10 @@ private struct PanelRow: ViewModifier {
     func body(content: Content) -> some View {
         content
             .padding(.vertical, 1)
+            // Room inside the panel above the first row and below the last, so a
+            // highlighted row doesn't touch its edge.
+            .padding(.top, on && index == 0 ? 8 : 0)
+            .padding(.bottom, on && index == count - 1 ? 8 : 0)
             .padding(.horizontal, 24)
             .background(
                 Group {

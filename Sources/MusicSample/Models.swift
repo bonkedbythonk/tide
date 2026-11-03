@@ -13,6 +13,11 @@ struct Song: Identifiable, Hashable, Codable {
     var artwork: URL?
     /// This row's own id within a playlist, which removing it needs.
     var setVideoId: String?
+    /// YouTube's kind of track; "MUSIC_VIDEO_TYPE_ATV" is a song with only its cover, no video.
+    var videoType: String?
+
+    /// False only when YouTube says there's no music video, just the cover.
+    var hasVideo: Bool { videoType != "MUSIC_VIDEO_TYPE_ATV" }
 
     var hue: Double { Double(id.stableHash % 1000) / 1000 }
     /// Fake playback needs a length even when YouTube didn't send one (Home items).

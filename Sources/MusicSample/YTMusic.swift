@@ -344,7 +344,8 @@ enum YTParse {
         }
         return Song(id: videoId, title: title, artist: artist, album: album, albumID: albumID,
                     artistID: artistID, duration: duration, artwork: thumbnail(r["thumbnail"]).url,
-                    setVideoId: dig(r, "playlistItemData", "playlistSetVideoId") as? String)
+                    setVideoId: dig(r, "playlistItemData", "playlistSetVideoId") as? String,
+                    videoType: first("musicVideoType", in: r) as? String)
     }
 
     /// Songs of a radio queue (playlistPanelVideoRenderer), from the `next` endpoint.
@@ -360,7 +361,8 @@ enum YTParse {
             return Song(id: id, title: title, artist: artistRun?["text"] as? String ?? "",
                         album: albumRun?["text"] as? String ?? "", albumID: browseID(albumRun),
                         artistID: browseID(artistRun), duration: seconds(text(r["lengthText"])) ?? 0,
-                        artwork: thumbnail(r["thumbnail"]).url)
+                        artwork: thumbnail(r["thumbnail"]).url,
+                        videoType: first("musicVideoType", in: r) as? String)
         }
     }
 
@@ -387,7 +389,8 @@ enum YTParse {
             let artistRun = subtitleRuns.first { pageType($0) == "MUSIC_PAGE_TYPE_ARTIST" }
             let song = Song(id: videoId, title: title, artist: artistRun?["text"] as? String ?? subtitle, album: "", albumID: nil,
                             artistID: artistRun.flatMap { dig($0, "navigationEndpoint", "browseEndpoint", "browseId") as? String },
-                            duration: 0, artwork: thumb.url)
+                            duration: 0, artwork: thumb.url,
+                            videoType: first("musicVideoType", in: r) as? String)
             return .song(song, video: thumb.wide)
         }
         if let playlistId = dig(r, "navigationEndpoint", "watchPlaylistEndpoint", "playlistId") as? String {

@@ -48,6 +48,9 @@ enum SleepTimer: String, CaseIterable, Identifiable {
     var autoplay = Prefs.bool("autoplay", true) { didSet { Prefs.set(autoplay, "autoplay") } }
     /// Fetches the radio; set by the app, which owns the YouTube client.
     @ObservationIgnored var radio: ((Song) async -> [Song])?
+    /// The library's latest copy of a song, for queue entries saved before YouTube's
+    /// track type was known.
+    @ObservationIgnored var latest: ((String) -> Song?)?
     /// Counts a play in your YouTube history (see `YTClient.addToHistory`).
     @ObservationIgnored var reportPlay: ((Song) async -> Void)?
     @ObservationIgnored private var reportedPlay: String?
@@ -340,6 +343,13 @@ enum SleepTimer: String, CaseIterable, Identifiable {
         loadToken += 1
         let token = loadToken
         reportedPlay = nil
+        // A new track plays the way you last chose, except that a song with no music
+        // video (only its cover) plays as audio; the next one with a video goes back.
+        if !followLive {
+            settingVideoForNewQueue = true
+            videoMode = prefersVideo && (song.videoType == nil ? latest?(song.id) ?? song : song).hasVideo
+            settingVideoForNewQueue = false
+        }
         needsLoad = false
         let fadeIn = crossfading || (smoothTransitions && !advancingNaturally)
         advancingNaturally = false
@@ -427,8 +437,11 @@ enum SleepTimer: String, CaseIterable, Identifiable {
     }
 
     /// Starts resolving a song the pointer rests on, so a click on it starts sooner.
-    func prefetch(_ song: Song, video: Bool = false) {
+    /// `video` nil: the kind this song would start as (your last choice, audio for a
+    /// song with no video), so the hover prepares what a click will actually play.
+    func prefetch(_ song: Song, video: Bool? = nil) {
         let height = videoQuality
+        let video = video ?? (prefersVideo && song.hasVideo)
         Task { await resolver.prefetch([song.id], video: video, maxHeight: height) }
     }
 

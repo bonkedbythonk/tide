@@ -80,6 +80,20 @@ struct AddToPlaylistButton: View {
 }
 
 /// Self-contained version for places that always show the button.
+/// Replaces Up Next with the song's radio; the song keeps playing.
+struct RadioButton: View {
+    @Environment(Player.self) private var player
+    let song: Song
+
+    var body: some View {
+        Button { player.playRadio(song) } label: {
+            Image(systemName: "dot.radiowaves.left.and.right").foregroundStyle(.secondary)
+        }
+        .buttonStyle(.borderless)
+        .help("Start radio from this song")
+    }
+}
+
 struct StandaloneAddButton: View {
     let songIDs: [String]
     @State private var open = false
@@ -197,6 +211,25 @@ struct ArtistLink: View {
     }
 }
 
+/// The album name, which opens the album when YouTube links one.
+struct AlbumLink: View {
+    @Environment(Router.self) private var router
+    let song: Song
+    @State private var hovering = false
+
+    var body: some View {
+        if let id = song.albumID {
+            Text(song.album)
+                .underline(hovering)
+                .onHover { hovering = $0 }
+                .onTapGesture { router.go(.page(id)) }
+                .help("Go to \(song.album)")
+        } else {
+            Text(song.album)
+        }
+    }
+}
+
 /// Right-click menu shared by every song row.
 struct SongMenu: View {
     @Environment(Library.self) private var library
@@ -207,6 +240,9 @@ struct SongMenu: View {
 
     var body: some View {
         let ids = songs.map(\.id)
+        if songs.count == 1, let song = songs.first {
+            Button("Start Radio") { player.playRadio(song) }
+        }
         Button("Play Next") { player.playNext(songs) }
         Button("Add to Queue") { player.addToQueue(songs) }
         Divider()
@@ -227,13 +263,12 @@ struct SongMenu: View {
     }
 }
 
-/// Compact song row used in Home grids and search results. Single click plays.
+/// Compact song row used in Home grids. A click plays the song and then its radio.
 /// Hover-only controls are built only while hovered (or while their popover is open),
 /// so a grid of hundreds of rows stays cheap to scroll.
 struct SongTile: View {
     @Environment(Player.self) private var player
     let song: Song
-    let context: [Song]
     @State private var hovering = false
     @State private var pickerOpen = false
 
@@ -276,7 +311,7 @@ struct SongTile: View {
             try? await Task.sleep(for: .milliseconds(500))
             if !Task.isCancelled { player.prefetch(song) }
         }
-        .onTapGesture { player.play(song, in: context) }
+        .onTapGesture { player.playRadio(song) }
         .draggable(SongDrag.payload([song.id])) { DragPreview(songs: [song]) }
         .contextMenu { SongMenu(songs: [song]) }
     }
@@ -287,7 +322,7 @@ struct SongGrid: View {
 
     var body: some View {
         LazyVGrid(columns: [GridItem(.adaptive(minimum: 270), spacing: 6)], spacing: 2) {
-            ForEach(songs) { SongTile(song: $0, context: songs) }
+            ForEach(songs) { SongTile(song: $0) }
         }
         .padding(.horizontal, 18)
     }
@@ -349,7 +384,9 @@ struct Shelf<Content: View>: View {
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            LazyHStack(alignment: .top, spacing: 16) { content }
+            // Not lazy: a lazy row takes its height from the cards built so far, and a
+            // shorter video card first cut off the titles of the taller ones.
+            HStack(alignment: .top, spacing: 16) { content }
                 .padding(.horizontal, 24)
                 // Room for a card growing on hover; the scroll view clips at its edge.
                 .padding(.vertical, 8)

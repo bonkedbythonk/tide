@@ -107,6 +107,7 @@ struct RootView: View {
         )) {
             SidePanelView()
                 .inspectorColumnWidth(min: 260, ideal: 310, max: 420)
+                .environment(\.colorScheme, wallpaper.isActive ? .dark : colorScheme)
         }
         .overlay(alignment: .topLeading) {
             if !router.showNowPlaying {
@@ -162,6 +163,8 @@ struct RootView: View {
             }
             .ignoresSafeArea()
         }
+        // Over a wallpaper the whole window is dark, the system-drawn dividers included.
+        .preferredColorScheme(wallpaper.isActive ? .dark : nil)
         .onPreferenceChange(CanvasSizeKey.self) { canvasSize = $0 }
         .environment(\.wallpaperCanvas, canvasSize)
         .overlay(alignment: .bottomTrailing) {
@@ -205,9 +208,14 @@ struct RootView: View {
             swipe.install(router: router, player: player)
             KeyboardShortcuts.install(player: player, router: router)
             player.radio = { [library] in await library.radio(after: $0) }
+            player.reportPlay = { [library] in await library.client.addToHistory($0.id) }
             if Demo.isOn { Demo.open(UserDefaults.standard.string(forKey: "demoScreen"), router: router) }
         }
         .task { await library.start() }
+        // Signed in (cookies written), before the library refresh finishes.
+        .onChange(of: library.state) { old, new in
+            if old == .starting, new == .ready || new == .loading { Task { await player.prepareRestored() } }
+        }
         // Warms the yt-dlp worker on something you're likely to play anyway.
         .onChange(of: library.home.first?.songs.first?.id, initial: true) {
             if let song = library.home.first?.songs.first { player.prefetch(song) }

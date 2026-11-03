@@ -47,6 +47,10 @@ enum SleepTimer: String, CaseIterable, Identifiable {
     var autoplay = Prefs.bool("autoplay", true) { didSet { Prefs.set(autoplay, "autoplay") } }
     /// Fetches the radio; set by the app, which owns the YouTube client.
     @ObservationIgnored var radio: ((Song) async -> [Song])?
+    /// Counts a play in your YouTube history (see `YTClient.addToHistory`).
+    @ObservationIgnored var reportPlay: ((Song) async -> Void)?
+    @ObservationIgnored private var reportedPlay: String?
+    var addToHistory = Prefs.bool("addToHistory", true) { didSet { Prefs.set(addToHistory, "addToHistory") } }
     var gapless = true
     var eq = EQPreset.flat
     /// Turn loud tracks down the way YouTube Music does (on by default).
@@ -57,7 +61,6 @@ enum SleepTimer: String, CaseIterable, Identifiable {
         }
     }
     var sleepTimer = SleepTimer.off
-    var device = "This Mac"
     var skipForward = true
     /// Song or music video for the current track (Pear's video-toggle). Switching
     /// reloads the track as the other kind, from the same moment.
@@ -94,6 +97,15 @@ enum SleepTimer: String, CaseIterable, Identifiable {
         }
     }
 
+    /// The current song as your Discord status.
+    var discordPresence = Prefs.bool("discordPresence", true) {
+        didSet {
+            Prefs.set(discordPresence, "discordPresence")
+            if discordPresence { publishNowPlaying() } else { discord.clear() }
+        }
+    }
+    @ObservationIgnored private let discord = DiscordPresence()
+
     /// Fade the volume on pause, resume and skips instead of cutting (your smooth-transitions plugin).
     var smoothTransitions = Prefs.bool("smoothTransitions", true) {
         didSet { Prefs.set(smoothTransitions, "smoothTransitions") }
@@ -110,7 +122,6 @@ enum SleepTimer: String, CaseIterable, Identifiable {
     @ObservationIgnored private var crossfading = false
     /// A song restored from last time; nothing is loaded in mpv until Play.
     @ObservationIgnored private var needsLoad = false
-    @ObservationIgnored private var lastSessionSave = Date.distantPast
     @ObservationIgnored private var radioSeed: String?
     @ObservationIgnored private var fadeLevel = 1.0
     @ObservationIgnored private var fadeTimer: Timer?
@@ -171,7 +182,11 @@ enum SleepTimer: String, CaseIterable, Identifiable {
                 self.crossfading = false
             }
             self.startCrossfadeIfDue(at: t)
-            if Date().timeIntervalSince(self.lastSessionSave) > 10 { self.saveSession() }
+            // Ten seconds in, like YouTube Music's own player, so skipped songs don't count.
+            if t > 10, self.addToHistory, !Demo.isOn, let song = self.current, self.reportedPlay != song.id {
+                self.reportedPlay = song.id
+                Task { await self.reportPlay?(song) }
+            }
         }
         e.onDuration = { [weak self, unowned e] d in
             guard let self, e === self.engine, !self.awaitingFile else { return }
@@ -243,18 +258,15 @@ enum SleepTimer: String, CaseIterable, Identifiable {
     private struct Session: Codable {
         let queue: [Song]
         let index: Int
-        let position: TimeInterval
     }
 
-    /// The queue, song and spot, so the next launch picks up here (paused).
+    /// The queue and song, so the next launch picks up here (paused, from the start).
     private func saveSession(now: Bool = false) {
-        lastSessionSave = Date()
         guard current != nil, !Demo.isOn else { return }
         // A long queue is cut to the part around the current song.
         let start = max(0, index - 50)
         let end = min(queue.count, index + 500)
-        DiskCache.save(Session(queue: Array(queue[start..<end]), index: index - start,
-                               position: position), "session", now: now)
+        DiskCache.save(Session(queue: Array(queue[start..<end]), index: index - start), "session", now: now)
     }
 
     private func restoreSession() {
@@ -268,24 +280,49 @@ enum SleepTimer: String, CaseIterable, Identifiable {
         guard let s = DiskCache.load(Session.self, "session"), s.queue.indices.contains(s.index) else { return }
         queue = s.queue
         index = s.index
-        position = s.position
         // Comes back as the song, not the video: an unloaded video showed as a black box.
         duration = s.queue[s.index].duration
         needsLoad = true
+    }
+
+    /// Resolves the song restored from last time (and the one after it) once you're
+    /// signed in, so Play starts it at once, the way you last chose.
+    func prepareRestored() async {
+        guard needsLoad, let song = current else { return }
+        await resolver.prepare([song.id] + upNext.prefix(1).map(\.id), video: prefersVideo, maxHeight: videoQuality)
     }
 
     // MARK: Autoplay
 
     /// On the last song or the one before it, adds YouTube's radio for it to the queue.
     private func extendWithRadioIfNeeded() {
-        guard autoplay, repeatMode == .off, index >= queue.count - 2, let seed = current,
-              radioSeed != seed.id, let radio else { return }
+        guard autoplay, repeatMode == .off, index >= queue.count - 2, let seed = current else { return }
+        appendRadio(after: seed)
+    }
+
+    /// Plays a song followed by its radio, as YouTube Music does for songs on Home.
+    /// The song already playing keeps playing; only what comes after it changes.
+    func playRadio(_ song: Song) {
+        if song.id == current?.id, !needsLoad {
+            queue = [song]
+            index = 0
+        } else {
+            play(song, in: [song])
+        }
+        radioSeed = nil
+        appendRadio(after: song)
+    }
+
+    private func appendRadio(after seed: Song) {
+        guard radioSeed != seed.id, let radio else { return }
         radioSeed = seed.id
         Task { @MainActor [weak self] in
             let songs = await radio(seed)
             guard let self, self.current?.id == seed.id else { return }
             let have = Set(self.queue.map(\.id))
             self.queue += songs.filter { !have.contains($0.id) }
+            // The radio usually arrives after the song's own load queued nothing next.
+            await self.resolver.prepare(self.upNext.prefix(2).map(\.id), video: self.videoMode, maxHeight: self.videoQuality)
         }
     }
 
@@ -301,6 +338,7 @@ enum SleepTimer: String, CaseIterable, Identifiable {
         }
         loadToken += 1
         let token = loadToken
+        reportedPlay = nil
         needsLoad = false
         let fadeIn = crossfading || (smoothTransitions && !advancingNaturally)
         advancingNaturally = false
@@ -345,7 +383,10 @@ enum SleepTimer: String, CaseIterable, Identifiable {
                 self.isLoading = false
                 self.saveSession()
                 self.extendWithRadioIfNeeded()
-                await self.resolver.prefetch(self.upNext.prefix(3).map(\.id), video: video, maxHeight: height)
+                // The next two are songs you're about to hear, so they don't wait in line
+                // behind songs you hovered; the third goes in the background line.
+                await self.resolver.prepare(self.upNext.prefix(2).map(\.id), video: video, maxHeight: height)
+                await self.resolver.prefetch(self.upNext.dropFirst(2).prefix(1).map(\.id), video: video, maxHeight: height)
             } catch {
                 guard token == self.loadToken else { return }
                 self.crossfading = false
@@ -574,7 +615,13 @@ enum SleepTimer: String, CaseIterable, Identifiable {
         }
     }
 
-    private func publishNowPlaying() { nowPlaying?.update(song: current, position: position, duration: length, playing: isPlaying) }
+    private func publishNowPlaying() {
+        nowPlaying?.update(song: current, position: position, duration: length, playing: isPlaying)
+        // A restored song that hasn't been played yet isn't something you're listening to.
+        if discordPresence, !needsLoad, !Demo.isOn {
+            discord.update(song: current, position: position, duration: length, playing: isPlaying)
+        }
+    }
 }
 
 /// Home section order and visibility, by section title, kept between launches.

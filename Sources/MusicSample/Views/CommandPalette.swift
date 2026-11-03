@@ -51,6 +51,8 @@ struct CommandPalette: View {
         if let s = player.current {
             list.insert(Command(id: "like", label: library.isLiked(s.id) ? "Unlike \(s.title)" : "Like \(s.title)",
                                 group: "Actions", symbol: "heart") { library.toggleLike(s.id) }, at: list.count - 3)
+            list.insert(Command(id: "radio", label: "Start Radio from This Song",
+                                group: "Actions", symbol: "dot.radiowaves.left.and.right") { player.playRadio(s) }, at: list.count - 3)
             list.insert(Command(id: "video", label: player.videoMode ? "Switch to Song" : "Switch to Music Video",
                                 group: "Actions", symbol: "play.rectangle") { player.videoMode.toggle() }, at: list.count - 3)
         }

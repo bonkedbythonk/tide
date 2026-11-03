@@ -148,7 +148,6 @@ struct PlayerExtras: View {
             }
             panelButton("quote.bubble", tab: .lyrics, help: "Lyrics")
             panelButton("list.bullet", tab: .queue, help: "Up Next")
-            PopoverButton(symbol: "hifispeaker.and.appletv", help: "Devices") { DevicesPopover() }
             PopoverButton(symbol: "slider.vertical.3", help: "Sound") { SoundPopover() }
             HStack(spacing: 6) {
                 Image(systemName: player.volume == 0 ? "speaker.slash.fill" : "speaker.wave.2.fill")
@@ -187,45 +186,6 @@ struct PopoverButton<Content: View>: View {
         }
         .help(help)
         .popover(isPresented: $open, arrowEdge: .top) { content }
-    }
-}
-
-struct DevicesPopover: View {
-    @Environment(Player.self) private var player
-    private let devices: [(String, String)] = [
-        ("This Mac", "laptopcomputer"),
-        ("Living Room (AirPlay)", "homepod.fill"),
-        ("AirPods Pro", "airpodspro"),
-        ("iPhone", "iphone"),
-    ]
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("Play on").font(.headline).padding(.bottom, 4)
-            ForEach(devices, id: \.0) { name, symbol in
-                Button { player.device = name } label: {
-                    HStack {
-                        Image(systemName: symbol).frame(width: 22)
-                        Text(name)
-                        Spacer()
-                        if player.device == name {
-                            Image(systemName: "checkmark").foregroundStyle(Color.accentColor)
-                        }
-                    }
-                    .padding(.vertical, 5)
-                    .padding(.horizontal, 6)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .modifier(HoverHighlight())
-            }
-            Divider().padding(.vertical, 4)
-            Text("iPhone playback and remote control are a mockup: they need the companion iPhone app.")
-                .font(.caption).foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(12)
-        .frame(width: 270)
     }
 }
 
@@ -281,7 +241,8 @@ struct SidePanelView: View {
             case .lyrics: LyricsView(fontSize: 20)
             }
         }
-        .background { if wallpaper.isActive { Rectangle().fill(.regularMaterial).ignoresSafeArea() } }
+        // Over a wallpaper it's dark like the sidebar and player bar, whatever the system look.
+        .background { if wallpaper.isActive { PanelBackground().ignoresSafeArea() } }
     }
 }
 
@@ -489,7 +450,10 @@ struct NowPlayingView: View {
                             Text(s.title).font(.title.bold()).lineLimit(1)
                             HStack(spacing: 0) {
                                 ArtistLink(song: s)
-                                if !s.album.isEmpty { Text(" — \(s.album)") }
+                                if !s.album.isEmpty {
+                                    Text(" — ")
+                                    AlbumLink(song: s)
+                                }
                             }
                             .font(.title3).foregroundStyle(.secondary).lineLimit(1)
                         }
@@ -498,6 +462,7 @@ struct NowPlayingView: View {
                         HStack(spacing: 18) {
                             LikeButton(songID: s.id)
                             StandaloneAddButton(songIDs: [s.id])
+                            RadioButton(song: s)
                         }
                         .font(.title2)
                     }

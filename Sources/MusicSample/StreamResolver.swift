@@ -108,6 +108,14 @@ actor StreamResolver {
         pumpPrefetch()
     }
 
+    /// Resolves the songs next in the queue now, one after another, outside the
+    /// background budget. Still holds off while YouTube is asking "are you a bot".
+    func prepare(_ videoIds: [String], video: Bool, maxHeight: Int) async {
+        for id in videoIds where Date() > backOffUntil {
+            _ = try? await resolve(id, video: video, maxHeight: maxHeight)
+        }
+    }
+
     private func pumpPrefetch() {
         while prefetchesRunning < 1, !prefetchQueue.isEmpty, backgroundAllowed {
             let next = prefetchQueue.removeFirst()

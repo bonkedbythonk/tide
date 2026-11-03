@@ -86,9 +86,9 @@ struct VideoFullscreenView: View {
     @State private var controlsVisible = true
     @State private var hideTask: Task<Void, Never>?
     @State private var showLyrics = false
+    /// The quality menu is open: hover events stop while it tracks, so auto-hide waits.
+    @State private var menuOpen = false
     @FocusState private var focused: Bool
-
-    private let qualities = [2160, 1440, 1080, 720, 480, 360]
 
     var body: some View {
         ZStack {
@@ -123,6 +123,14 @@ struct VideoFullscreenView: View {
             poke()
         }
         .onDisappear { hideTask?.cancel() }
+        .onReceive(NotificationCenter.default.publisher(for: NSMenu.didBeginTrackingNotification)) { _ in
+            menuOpen = true
+            hideTask?.cancel()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSMenu.didEndTrackingNotification)) { _ in
+            menuOpen = false
+            poke()
+        }
     }
 
     private func controls(_ s: Song) -> some View {
@@ -141,17 +149,7 @@ struct VideoFullscreenView: View {
                         Image(systemName: showLyrics ? "captions.bubble.fill" : "captions.bubble")
                     }
                     .help("Lyrics overlay (C)")
-                    Menu {
-                        Picker("Max quality", selection: Binding(get: { player.videoQuality }, set: { player.videoQuality = $0 })) {
-                            ForEach(qualities, id: \.self) { Text("\($0)p").tag($0) }
-                        }
-                    } label: {
-                        Image(systemName: "gearshape")
-                    }
-                    .menuStyle(.borderlessButton)
-                    .menuIndicator(.hidden)
-                    .fixedSize()
-                    .help("Max quality: \(player.videoQuality)p")
+                    QualityMenu()
                     Button {
                         player.videoMode = false
                         router.exitVideoFullscreen()
@@ -232,10 +230,31 @@ struct VideoFullscreenView: View {
         hideTask?.cancel()
         hideTask = Task { @MainActor in
             try? await Task.sleep(for: .seconds(2.5))
-            guard !Task.isCancelled, player.isPlaying else { return }
+            guard !Task.isCancelled, player.isPlaying, !menuOpen else { return }
             withAnimation(.easeOut(duration: 0.5)) { controlsVisible = false }
             NSCursor.setHiddenUntilMouseMoves(true)
         }
+    }
+}
+
+/// Its own view so the playback clock redrawing the fullscreen controls doesn't
+/// rebuild the menu while it's open.
+private struct QualityMenu: View {
+    @Environment(Player.self) private var player
+
+    var body: some View {
+        Menu {
+            Picker("Max quality", selection: Binding(get: { player.videoQuality }, set: { player.videoQuality = $0 })) {
+                ForEach([2160, 1440, 1080, 720, 480, 360], id: \.self) { Text("\($0)p").tag($0) }
+            }
+            .pickerStyle(.inline)
+        } label: {
+            Image(systemName: "gearshape")
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Max quality: \(player.videoQuality)p")
     }
 }
 

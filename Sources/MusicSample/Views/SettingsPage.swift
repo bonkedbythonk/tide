@@ -25,6 +25,8 @@ struct SettingsPage: View {
                     Toggle("Autoplay similar songs", isOn: $player.autoplay)
                     Toggle("Smooth transitions", isOn: $player.smoothTransitions)
                     Toggle("Match YouTube Music loudness", isOn: $player.matchLoudness)
+                    Toggle("Show what's playing on Discord", isOn: $player.discordPresence)
+                    Toggle("Add songs you play to your YouTube history", isOn: $player.addToHistory)
                     Picker("Video quality", selection: $player.videoQuality) {
                         ForEach([480, 720, 1080, 1440, 2160], id: \.self) { Text("\($0)p").tag($0) }
                     }

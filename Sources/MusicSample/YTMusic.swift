@@ -121,6 +121,28 @@ final class YTClient {
 
     func browse(_ id: String) async throws -> JSON { try await call("browse", ["browseId": id]) }
 
+    /// Puts a song in your YouTube history, which is what Home's "Listen again" and
+    /// your recommendations are built from. Streams played through yt-dlp aren't
+    /// counted, so this sends the play report YouTube Music's own player sends.
+    func addToHistory(_ videoId: String) async {
+        guard let player = try? await call("player", ["videoId": videoId]),
+              let base = YTParse.dig(player, "playbackTracking", "videostatsPlaybackUrl", "baseUrl") as? String,
+              var url = URLComponents(string: base) else { return }
+        let letters = Array("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_")
+        let cpn = String((0..<16).map { _ in letters.randomElement()! })
+        url.queryItems = (url.queryItems ?? []) + [
+            URLQueryItem(name: "ver", value: "2"), URLQueryItem(name: "c", value: "WEB_REMIX"),
+            URLQueryItem(name: "cpn", value: cpn),
+        ]
+        guard let target = url.url else { return }
+        var req = URLRequest(url: target)
+        req.setValue(Self.userAgent, forHTTPHeaderField: "User-Agent")
+        req.setValue(cookieHeader, forHTTPHeaderField: "Cookie")
+        req.setValue(authorization, forHTTPHeaderField: "Authorization")
+        req.setValue("0", forHTTPHeaderField: "X-Goog-AuthUser")
+        _ = try? await session.data(for: req)
+    }
+
     /// Next page of a list. Home uses the old query-string style, lists the body style.
     func more(_ token: String, homeStyle: Bool = false) async throws -> JSON {
         if homeStyle {

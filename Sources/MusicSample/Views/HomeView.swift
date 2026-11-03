@@ -59,7 +59,6 @@ struct ShelfContent: View {
         if shelf.isSongList {
             SongGrid(songs: shelf.songs)
         } else {
-            let videos = shelf.songs
             Shelf {
                 ForEach(shelf.items) { item in
                     switch item {
@@ -68,10 +67,10 @@ struct ShelfContent: View {
                                   width: video ? 270 : 165, wide: video,
                                   symbol: video ? "play.rectangle.fill" : "music.note",
                                   open: {
-                                      player.play(s, in: videos)
+                                      player.playRadio(s)
                                       if video { withAnimation(.spring(duration: 0.45, bounce: 0)) { router.showNowPlaying = true } }
                                   },
-                                  play: { player.play(s, in: videos) },
+                                  play: { player.playRadio(s) },
                                   prefetch: { player.prefetch(s, video: player.prefersVideo) })
                     case .media(let m):
                         MediaItemCard(item: m)

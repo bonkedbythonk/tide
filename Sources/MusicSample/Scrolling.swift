@@ -154,6 +154,8 @@ final class ImageDecodeCache: @unchecked Sendable {
     private let cache = NSCache<NSString, Box>()
     private let lock = NSLock()
     private var inFlight: [String: Task<CGImage?, Never>] = [:]
+    /// The last size decoded for each picture, for a view that needs one at once.
+    private var decodedSize: [String: CGFloat] = [:]
 
     private static let session: URLSession = {
         let config = URLSessionConfiguration.default
@@ -174,6 +176,16 @@ final class ImageDecodeCache: @unchecked Sendable {
 
     func cached(_ url: URL, maxPixelSize px: CGFloat) -> CGImage? {
         lock.withLock { cache.object(forKey: key(url, px) as NSString)?.image }
+    }
+
+    /// This size if it's ready, otherwise any size already decoded. A drag preview is
+    /// drawn the instant the drag starts and never updates, so it can't wait.
+    func cachedAnySize(_ url: URL, preferring px: CGFloat) -> CGImage? {
+        lock.withLock {
+            if let exact = cache.object(forKey: key(url, px) as NSString)?.image { return exact }
+            guard let other = decodedSize[url.absoluteString] else { return nil }
+            return cache.object(forKey: key(url, other) as NSString)?.image
+        }
     }
 
     func image(_ url: URL, maxPixelSize px: CGFloat) async -> CGImage? {
@@ -198,7 +210,10 @@ final class ImageDecodeCache: @unchecked Sendable {
         let result = await task.value
         lock.withLock {
             inFlight[k] = nil
-            if let result { cache.setObject(Box(result), forKey: k as NSString, cost: result.bytesPerRow * result.height) }
+            if let result {
+                cache.setObject(Box(result), forKey: k as NSString, cost: result.bytesPerRow * result.height)
+                decodedSize[url.absoluteString] = px
+            }
         }
         return result
     }
@@ -212,7 +227,7 @@ struct CachedImage: View {
     init(url: URL, maxPixelSize: CGFloat) {
         self.url = url
         self.maxPixelSize = maxPixelSize
-        _image = State(initialValue: ImageDecodeCache.shared.cached(url, maxPixelSize: maxPixelSize))
+        _image = State(initialValue: ImageDecodeCache.shared.cachedAnySize(url, preferring: maxPixelSize))
     }
 
     var body: some View {
@@ -226,8 +241,12 @@ struct CachedImage: View {
         .task(id: url) {
             // A reused row can hand this view a different song's URL: show that one,
             // never the previous picture.
-            image = ImageDecodeCache.shared.cached(url, maxPixelSize: maxPixelSize)
-            if image == nil { image = await ImageDecodeCache.shared.image(url, maxPixelSize: maxPixelSize) }
+            if let exact = ImageDecodeCache.shared.cached(url, maxPixelSize: maxPixelSize) {
+                image = exact
+            } else {
+                image = ImageDecodeCache.shared.cachedAnySize(url, preferring: maxPixelSize)
+                if let sharp = await ImageDecodeCache.shared.image(url, maxPixelSize: maxPixelSize) { image = sharp }
+            }
         }
     }
 }

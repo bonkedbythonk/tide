@@ -37,7 +37,25 @@ enum SleepTimer: String, CaseIterable, Identifiable {
     var volume = Prefs.double("volume", 0.7) {
         didSet { applyVolume(); Prefs.set(volume, "volume") }
     }
-    var shuffle = Prefs.bool("shuffle") { didSet { Prefs.set(shuffle, "shuffle") } }
+    /// Turning it on mixes up Up Next; turning it off puts it back in its own order.
+    var shuffle = Prefs.bool("shuffle") {
+        didSet {
+            Prefs.set(shuffle, "shuffle")
+            guard shuffle != oldValue, !settingShuffle, queue.indices.contains(index) else { return }
+            let played = Array(queue[...index])
+            if shuffle {
+                unshuffledUpNext = upNext
+                queue = played + upNext.shuffled()
+            } else if let original = unshuffledUpNext {
+                // The original order of what's still to come, then anything queued since.
+                let left = Set(upNext.map(\.id)), known = Set(original.map(\.id))
+                queue = played + original.filter { left.contains($0.id) } + upNext.filter { !known.contains($0.id) }
+                unshuffledUpNext = nil
+            }
+        }
+    }
+    @ObservationIgnored private var unshuffledUpNext: [Song]?
+    @ObservationIgnored private var settingShuffle = false
     var isMuted = false { didSet { engines.forEach { $0.set("mute", isMuted ? "yes" : "no") } } }
     var repeatMode = RepeatMode(rawValue: Prefs.string("repeat") ?? "") ?? .off {
         didSet { Prefs.set(repeatMode.rawValue, "repeat") }
@@ -448,8 +466,11 @@ enum SleepTimer: String, CaseIterable, Identifiable {
     func play(_ song: Song, in list: [Song], at start: TimeInterval = 0) {
         var list = list.isEmpty ? [song] : list
         var first = list.firstIndex(of: song) ?? 0
+        unshuffledUpNext = nil
         if shuffle {
-            list = [song] + list.enumerated().filter { $0.offset != first }.map(\.element).shuffled()
+            let rest = list.enumerated().filter { $0.offset != first }.map(\.element)
+            unshuffledUpNext = rest
+            list = [song] + rest.shuffled()
             first = 0
         }
         finishCrossfade()
@@ -463,10 +484,13 @@ enum SleepTimer: String, CaseIterable, Identifiable {
         load(at: start)
     }
 
+    /// Play turns shuffle off and Shuffle turns it on, as in YouTube Music.
     func playAll(_ songs: [Song], shuffled: Bool = false) {
         guard !songs.isEmpty else { return }
-        let list = shuffled ? songs.shuffled() : songs
-        play(list[0], in: list)
+        settingShuffle = true
+        shuffle = shuffled
+        settingShuffle = false
+        play(shuffled ? songs.randomElement()! : songs[0], in: songs)
     }
 
     func jump(to queueIndex: Int) {

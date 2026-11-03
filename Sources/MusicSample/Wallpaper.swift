@@ -91,6 +91,8 @@ import SwiftUI
     /// A colour from the playing song's cover for the player bar's active controls;
     /// nil for a grey cover, which keeps the system accent.
     private(set) var coverAccent: Color?
+    /// The same colour, deep enough for white text on it (the Play button).
+    private(set) var coverFill: Color?
 
     @ObservationIgnored private var coverURL: URL?
     @ObservationIgnored private var timer: Timer?
@@ -129,10 +131,14 @@ import SwiftUI
         coverURL = cover
         Task.detached(priority: .utility) { [weak self] in
             let image = if let cover { await ImageDecodeCache.shared.image(cover, maxPixelSize: 64) } else { CGImage?.none }
-            let accent = image.flatMap(Self.accent)
+            let accent = image.flatMap { Self.accent($0, brightness: 0.95) }
+            let fill = image.flatMap { Self.accent($0, brightness: 0.68) }
             await MainActor.run { [weak self] in
                 guard let self, self.coverURL == cover else { return }
-                withAnimation(.easeInOut(duration: 0.4)) { self.coverAccent = accent }
+                withAnimation(.easeInOut(duration: 0.4)) {
+                    self.coverAccent = accent
+                    self.coverFill = fill
+                }
             }
         }
         switch source {
@@ -275,14 +281,15 @@ import SwiftUI
         return Color(hue: h, saturation: min(0.22, s * 0.8), brightness: 0.17)
     }
 
-    /// The cover's own colour, made bright and clear enough to read on the dark bar.
-    static func accent(_ image: CGImage) -> Color? {
+    /// The cover's own colour, made clear enough to read: bright for text and icons
+    /// on dark, deeper behind white text.
+    static func accent(_ image: CGImage, brightness: Double) -> Color? {
         let rgb = signature(image)
         let ns = NSColor(srgbRed: rgb[0], green: rgb[1], blue: rgb[2], alpha: 1)
         var h: CGFloat = 0, s: CGFloat = 0, v: CGFloat = 0
         ns.getHue(&h, saturation: &s, brightness: &v, alpha: nil)
         guard s > 0.15 else { return nil }
-        return Color(hue: h, saturation: min(0.8, max(0.5, s)), brightness: 0.95)
+        return Color(hue: h, saturation: min(0.8, max(0.5, s)), brightness: brightness)
     }
 
     /// Draws the image into one pixel and reads its luma.
@@ -317,8 +324,10 @@ extension EnvironmentValues {
         get { self[WallpaperCanvasKey.self] }
         set { self[WallpaperCanvasKey.self] = newValue }
     }
-    /// The player bar's colour for active controls: from the cover, or the system accent.
+    /// The colour for active controls: from the playing song's cover, or the system accent.
     @Entry var barAccent: Color = .accentColor
+    /// Its deeper form, for filled buttons with white text.
+    @Entry var accentFill: Color = .accentColor
 }
 
 /// Over a wallpaper the sidebar and main area float as rounded panels on a darker

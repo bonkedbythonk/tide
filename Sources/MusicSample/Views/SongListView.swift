@@ -178,7 +178,7 @@ struct SongListView: View {
                     Button { player.playAll(visible, shuffled: true) } label: {
                         Label("Shuffle", systemImage: "shuffle")
                     }
-                    .buttonStyle(PillButtonStyle(prominent: false))
+                    .buttonStyle(PillButtonStyle(prominent: false, active: player.shuffle))
                     if let allSongsID = page.allSongsID {
                         Button { router.go(.page(allSongsID)) } label: {
                             Label("All Songs", systemImage: "music.note.list")
@@ -481,16 +481,30 @@ struct SearchView: View {
 /// solid accent for the main action, frosted for the rest.
 struct PillButtonStyle: ButtonStyle {
     let prominent: Bool
+    /// Lit in the accent colour, for a mode that's on (Shuffle).
+    var active = false
 
     func makeBody(configuration: Configuration) -> some View {
+        PillBody(configuration: configuration, prominent: prominent, active: active)
+    }
+}
+
+private struct PillBody: View {
+    @Environment(\.barAccent) private var accent
+    @Environment(\.accentFill) private var fill
+    let configuration: ButtonStyleConfiguration
+    let prominent: Bool
+    let active: Bool
+
+    var body: some View {
         configuration.label
             .font(.callout.weight(.semibold))
             .padding(.horizontal, 16)
             .padding(.vertical, 8)
-            .foregroundStyle(prominent ? Color.white : Color.primary)
+            .foregroundStyle(prominent ? Color.white : active ? accent : Color.primary)
             .background {
                 if prominent {
-                    Capsule().fill(Color.accentColor)
+                    Capsule().fill(fill)
                 } else {
                     Capsule().fill(.ultraThinMaterial)
                         .overlay(Capsule().strokeBorder(.white.opacity(0.15)))

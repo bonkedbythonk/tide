@@ -176,6 +176,10 @@ struct RootView: View {
             }
             .ignoresSafeArea()
         }
+        // Active buttons, sliders and the Play buttons take the playing song's cover colour.
+        .environment(\.barAccent, wallpaper.coverAccent ?? .accentColor)
+        .environment(\.accentFill, wallpaper.coverFill ?? .accentColor)
+        .tint(wallpaper.coverAccent ?? .accentColor)
         // Over a wallpaper the whole window is dark, the system-drawn dividers included.
         .preferredColorScheme(wallpaper.isActive ? .dark : nil)
         .onPreferenceChange(CanvasSizeKey.self) { canvasSize = $0 }

@@ -22,9 +22,6 @@ struct PlayerBar: View {
         // Over a wallpaper it sits on the window's dark frame, like Spotify's.
         .background { if !wallpaper.isActive { Rectangle().fill(.bar) } }
         .environment(\.colorScheme, wallpaper.isActive ? .dark : colorScheme)
-        // Active buttons, the progress bar and volume take the playing song's cover colour.
-        .environment(\.barAccent, wallpaper.coverAccent ?? .accentColor)
-        .tint(wallpaper.coverAccent ?? .accentColor)
         // Clicking anywhere on the bar that isn't a control opens or closes Now Playing.
         .contentShape(Rectangle())
         .onTapGesture {

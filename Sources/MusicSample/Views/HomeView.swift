@@ -5,11 +5,14 @@ struct HomeView: View {
     @Environment(Player.self) private var player
     @Environment(HomeConfig.self) private var home
     @State private var customizing = false
+    @State private var refreshing = false
 
     var body: some View {
         let shelves = home.arrange(library.home)
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 30) {
+            // Not lazy: a lazy stack guessed the height of shelves above the screen and
+            // corrected it while scrolling back up, so the page jumped near the top.
+            VStack(alignment: .leading, spacing: 30) {
                 HStack {
                     Text(greeting).font(.system(size: 30, weight: .bold))
                     Spacer()
@@ -31,10 +34,28 @@ struct HomeView: View {
                 // Reaching the bottom asks YouTube for the next few sections.
                 Color.clear
                     .frame(height: 1)
-                    .onAppear { Task { await library.loadMoreHome(pages: 2) } }
+                    .onScrollVisibilityChange { visible in
+                        if visible { Task { await library.loadMoreHome(pages: 2) } }
+                    }
             }
             .padding(.top, 50)
             .padding(.bottom, 20)
+        }
+        // Floats over the page: inserted into it, it shifted the content mid-pull.
+        .overlay(alignment: .top) {
+            if refreshing {
+                ProgressView().controlSize(.small).padding(.top, 14).transition(.opacity)
+            }
+        }
+        .animation(.easeOut(duration: 0.2), value: refreshing)
+        // Pulling down past the top reloads Home.
+        .onScrollGeometryChange(for: Bool.self) { $0.contentOffset.y + $0.contentInsets.top < -70 } action: { _, pulled in
+            guard pulled, !refreshing else { return }
+            refreshing = true
+            Task {
+                await library.refresh()
+                refreshing = false
+            }
         }
         .sheet(isPresented: $customizing) { CustomizeHomeSheet() }
         .onChange(of: library.home.count, initial: true) { home.learn(library.home) }

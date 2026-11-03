@@ -40,7 +40,7 @@ struct CommandPalette: View {
             Command(id: "toggle", label: player.isPlaying ? "Pause" : "Play", group: "Actions", symbol: "playpause") { player.toggle() },
             Command(id: "next", label: "Next Song", group: "Actions", symbol: "forward") { player.next() },
             Command(id: "previous", label: "Previous Song", group: "Actions", symbol: "backward") { player.previous() },
-            Command(id: "shuffle", label: player.shuffle ? "Turn Shuffle Off" : "Turn Shuffle On", group: "Actions", symbol: "shuffle") { player.shuffle.toggle() },
+            Command(id: "shuffle", label: player.shuffle ? "Turn Shuffle Off" : "Turn Shuffle On", group: "Actions", symbol: "shuffle") { withAnimation(.snappy(duration: 0.45)) { player.shuffle.toggle() } },
             Command(id: "repeat", label: "Change Repeat", group: "Actions", symbol: "repeat") { player.cycleRepeat() },
             Command(id: "nowplaying", label: "Now Playing", group: "Actions", symbol: "rectangle.on.rectangle") { router.showNowPlaying = true },
             Command(id: "lyrics", label: "Lyrics", group: "Actions", symbol: "quote.bubble") { router.togglePanel(.lyrics) },

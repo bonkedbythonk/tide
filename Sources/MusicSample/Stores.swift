@@ -195,7 +195,9 @@ enum SleepTimer: String, CaseIterable, Identifiable {
             guard let self, e === self.engine, !self.awaitingFile else { return }
             self.livePosition = t
             guard !self.isLoading else { return }
-            self.position = t
+            // mpv reports dozens of times a second; every change redraws whatever shows
+            // the time. A quarter second is as smooth to the eye and far cheaper.
+            if abs(t - self.position) >= 0.25 { self.position = t }
             if self.fadeInWhenPlaying {
                 self.fadeInWhenPlaying = false
                 self.fadeLevel = 0
@@ -886,7 +888,7 @@ enum KeyboardShortcuts {
         switch event.charactersIgnoringModifiers ?? "" {
         case "?": withAnimation(.snappy) { router.showShortcuts.toggle() }
         case "m": player.toggleMute()
-        case "s": player.shuffle.toggle()
+        case "s": withAnimation(.snappy(duration: 0.45)) { player.shuffle.toggle() }
         case "r": player.cycleRepeat()
         case "v": if player.current != nil { player.videoMode.toggle() }
         case "f": if player.videoMode { router.videoFullscreen ? router.exitVideoFullscreen() : router.enterVideoFullscreen() }

@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct PlayerBar: View {
@@ -90,7 +91,7 @@ struct TransportControls: View {
         let duration = known ? player.length : 1
         VStack(spacing: 4) {
             HStack(spacing: 24) {
-                Button { player.shuffle.toggle() } label: {
+                Button { withAnimation(.snappy(duration: 0.45)) { player.shuffle.toggle() } } label: {
                     Image(systemName: "shuffle")
                         .foregroundStyle(player.shuffle ? accent : Color.secondary)
                 }
@@ -413,6 +414,90 @@ struct LyricsView: View {
     }
 }
 
+/// Soft blobs in the cover's colours drifting behind the artwork; they hold still
+/// while paused. Core Animation runs the drift and the blur on the GPU, so nothing
+/// is redrawn on the main thread each frame.
+struct CoverLight: NSViewRepresentable {
+    @Environment(Player.self) private var player
+    @Environment(WallpaperStore.self) private var wallpaper
+
+    func makeNSView(context: Context) -> CoverLightView { CoverLightView() }
+
+    func updateNSView(_ view: CoverLightView, context: Context) {
+        let colors = wallpaper.coverPalette.isEmpty ? [wallpaper.coverAccent ?? .accentColor] : wallpaper.coverPalette
+        view.update(colors: colors.map { NSColor($0).cgColor }, playing: player.isPlaying)
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: CoverLightView, context: Context) -> CGSize? {
+        CGSize(width: 820, height: 820)
+    }
+}
+
+final class CoverLightView: NSView {
+    private let blobs = (0..<3).map { _ in CALayer() }
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        let root = CALayer()
+        layer = root
+        wantsLayer = true
+        for (i, blob) in blobs.enumerated() {
+            let side = 560 - CGFloat(i) * 70
+            blob.bounds = CGRect(x: 0, y: 0, width: side, height: side)
+            blob.opacity = i == 2 ? 0.6 : 0.8
+            // A disc fading to clear at its edge: the softness is built in, so no blur
+            // filter has to run while the blobs move.
+            let mask = CAGradientLayer()
+            mask.type = .radial
+            mask.colors = [CGColor(gray: 1, alpha: 1), CGColor(gray: 1, alpha: 0.35), CGColor(gray: 1, alpha: 0)]
+            mask.locations = [0, 0.45, 1]
+            mask.startPoint = CGPoint(x: 0.5, y: 0.5)
+            mask.endPoint = CGPoint(x: 1, y: 1)
+            mask.frame = blob.bounds
+            blob.mask = mask
+            root.addSublayer(blob)
+        }
+    }
+
+    required init?(coder: NSCoder) { fatalError("unused") }
+
+    override func layout() {
+        super.layout()
+        // Each blob drifts around its own slow loop, centred on the artwork.
+        for (i, blob) in blobs.enumerated() {
+            let loop = CAKeyframeAnimation(keyPath: "position")
+            loop.path = CGPath(ellipseIn: CGRect(x: bounds.midX - 170, y: bounds.midY - 130, width: 340, height: 260),
+                               transform: nil)
+            loop.duration = 48 + Double(i) * 17
+            loop.timeOffset = Double(i) * 13
+            loop.repeatCount = .infinity
+            loop.calculationMode = .paced
+            blob.position = CGPoint(x: bounds.midX, y: bounds.midY)
+            blob.add(loop, forKey: "drift")
+        }
+    }
+
+    func update(colors: [CGColor], playing: Bool) {
+        CATransaction.begin()
+        CATransaction.setAnimationDuration(1.2)
+        for (i, blob) in blobs.enumerated() { blob.backgroundColor = colors[i % colors.count] }
+        CATransaction.commit()
+        guard let root = layer, (root.speed > 0) != playing else { return }
+        // Pausing freezes the layer clock where it is; playing resumes from there.
+        if playing {
+            let paused = root.timeOffset
+            root.speed = 1
+            root.timeOffset = 0
+            root.beginTime = 0
+            root.beginTime = root.convertTime(CACurrentMediaTime(), from: nil) - paused
+        } else {
+            let now = root.convertTime(CACurrentMediaTime(), from: nil)
+            root.speed = 0
+            root.timeOffset = now
+        }
+    }
+}
+
 struct NowPlayingView: View {
     @Environment(Player.self) private var player
     @Environment(Router.self) private var router
@@ -479,6 +564,7 @@ struct NowPlayingView: View {
                         }
                         .id("\(s.id)-\(player.videoMode)")
                         .contextMenu { SongMenu(songs: [s]) }
+                        .background { if !player.videoMode { CoverLight().frame(width: 820, height: 820) } }
                         .transition(.push(from: player.skipForward ? .trailing : .leading))
                         .scaleEffect(appeared ? 1 : 0.85)
                         .opacity(appeared ? 1 : 0)
@@ -655,10 +741,73 @@ struct PlayingIndicator: View {
     var body: some View {
         ZStack {
             RoundedRectangle(cornerRadius: 4).fill(.black.opacity(0.4))
-            Image(systemName: "waveform")
-                .font(.system(size: 14, weight: .bold))
-                .foregroundStyle(.white)
-                .symbolEffect(.variableColor.iterative.dimInactiveLayers, isActive: player.isPlaying)
+            EqualizerBars(playing: player.isPlaying, color: .white).frame(width: 14, height: 14)
+        }
+    }
+}
+
+/// Three bars bouncing like a level meter. Core Animation moves them on the GPU: the
+/// SF Symbol effect used before redrew on the main thread every frame, and with a
+/// song on screen kept Tide at over half a CPU core.
+struct EqualizerBars: NSViewRepresentable {
+    let playing: Bool
+    var color: Color = .primary
+
+    func makeNSView(context: Context) -> EqualizerBarsView { EqualizerBarsView() }
+
+    func updateNSView(_ view: EqualizerBarsView, context: Context) {
+        view.update(color: NSColor(color).cgColor, playing: playing)
+    }
+}
+
+final class EqualizerBarsView: NSView {
+    private let bars = (0..<3).map { _ in CALayer() }
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        let root = CALayer()
+        layer = root
+        wantsLayer = true
+        for (i, bar) in bars.enumerated() {
+            bar.anchorPoint = CGPoint(x: 0.5, y: 0)
+            root.addSublayer(bar)
+            let bounce = CABasicAnimation(keyPath: "transform.scale.y")
+            bounce.fromValue = 0.25
+            bounce.toValue = 1
+            bounce.duration = [0.42, 0.55, 0.36][i]
+            bounce.timeOffset = Double(i) * 0.17
+            bounce.autoreverses = true
+            bounce.repeatCount = .infinity
+            bounce.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            bar.add(bounce, forKey: "bounce")
+        }
+    }
+
+    required init?(coder: NSCoder) { fatalError("unused") }
+
+    override func layout() {
+        super.layout()
+        let width = bounds.width / 5
+        for (i, bar) in bars.enumerated() {
+            bar.bounds = CGRect(x: 0, y: 0, width: width, height: bounds.height)
+            bar.position = CGPoint(x: width * (CGFloat(i) * 2 + 0.5), y: 0)
+            bar.cornerRadius = width / 2
+        }
+    }
+
+    func update(color: CGColor, playing: Bool) {
+        bars.forEach { $0.backgroundColor = color }
+        guard let root = layer, (root.speed > 0) != playing else { return }
+        if playing {
+            let paused = root.timeOffset
+            root.speed = 1
+            root.timeOffset = 0
+            root.beginTime = 0
+            root.beginTime = root.convertTime(CACurrentMediaTime(), from: nil) - paused
+        } else {
+            let now = root.convertTime(CACurrentMediaTime(), from: nil)
+            root.speed = 0
+            root.timeOffset = now
         }
     }
 }
@@ -668,9 +817,16 @@ struct PlayingIndicator: View {
 struct QueueEntry: Identifiable {
     let index: Int
     let song: Song
-    var id: String { "\(index)-\(song.id)" }
+    /// The song, and which copy of it when queued twice: not its place, so a row
+    /// keeps its identity when shuffling moves it and slides there.
+    let id: String
 
     static func list(_ songs: [Song]) -> [QueueEntry] {
-        songs.enumerated().map { QueueEntry(index: $0.offset, song: $0.element) }
+        var seen: [String: Int] = [:]
+        return songs.enumerated().map { offset, song in
+            let copy = seen[song.id, default: 0]
+            seen[song.id] = copy + 1
+            return QueueEntry(index: offset, song: song, id: "\(song.id)#\(copy)")
+        }
     }
 }

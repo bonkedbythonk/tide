@@ -533,9 +533,7 @@ struct SongRow: View {
         HStack(spacing: 12) {
             Group {
                 if playing {
-                    Image(systemName: "waveform")
-                        .foregroundStyle(.primary)
-                        .symbolEffect(.variableColor.iterative.dimInactiveLayers, isActive: player.isPlaying)
+                    EqualizerBars(playing: player.isPlaying).frame(width: 13, height: 13)
                 } else if item.isSuggestion {
                     Image(systemName: "sparkles").foregroundStyle(.secondary)
                 } else {

@@ -93,6 +93,8 @@ import SwiftUI
     private(set) var coverAccent: Color?
     /// The same colour, deep enough for white text on it (the Play button).
     private(set) var coverFill: Color?
+    /// The cover's three main colours, for the light behind it in Now Playing.
+    private(set) var coverPalette: [Color] = []
 
     @ObservationIgnored private var coverURL: URL?
     @ObservationIgnored private var timer: Timer?
@@ -133,12 +135,14 @@ import SwiftUI
             let image = if let cover { await ImageDecodeCache.shared.image(cover, maxPixelSize: 64) } else { CGImage?.none }
             let accent = image.flatMap { Self.accent($0, brightness: 0.95) }
             let fill = image.flatMap { Self.accent($0, brightness: 0.68) }
+            let palette = image.map(Self.palette) ?? []
             await MainActor.run { [weak self] in
                 guard let self, self.coverURL == cover else { return }
                 withAnimation(.easeInOut(duration: 0.4)) {
                     self.coverAccent = accent
                     self.coverFill = fill
                 }
+                withAnimation(.easeInOut(duration: 1.2)) { self.coverPalette = palette }
             }
         }
         switch source {
@@ -290,6 +294,35 @@ import SwiftUI
         ns.getHue(&h, saturation: &s, brightness: &v, alpha: nil)
         guard s > 0.15 else { return nil }
         return Color(hue: h, saturation: min(0.8, max(0.5, s)), brightness: brightness)
+    }
+
+    /// Up to three main colours: pixels grouped by hue (12 groups), each group weighted
+    /// by how colourful its pixels are, the strongest groups averaged. A grey cover
+    /// gives its average grey.
+    static func palette(_ image: CGImage) -> [Color] {
+        let side = 24
+        var pixels = [UInt8](repeating: 0, count: side * side * 4)
+        guard let context = CGContext(data: &pixels, width: side, height: side, bitsPerComponent: 8, bytesPerRow: side * 4,
+                                      space: CGColorSpaceCreateDeviceRGB(),
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return [] }
+        context.draw(image, in: CGRect(x: 0, y: 0, width: side, height: side))
+        var groups = [(r: Double, g: Double, b: Double, weight: Double)](repeating: (0, 0, 0, 0), count: 12)
+        for i in stride(from: 0, to: pixels.count, by: 4) {
+            let r = Double(pixels[i]) / 255, g = Double(pixels[i + 1]) / 255, b = Double(pixels[i + 2]) / 255
+            var h: CGFloat = 0, s: CGFloat = 0, v: CGFloat = 0
+            NSColor(srgbRed: r, green: g, blue: b, alpha: 1).getHue(&h, saturation: &s, brightness: &v, alpha: nil)
+            let weight = Double(s * v) + 0.01
+            let group = min(11, Int(h * 12))
+            groups[group].r += r * weight; groups[group].g += g * weight
+            groups[group].b += b * weight; groups[group].weight += weight
+        }
+        return groups.filter { $0.weight > 0.5 }.sorted { $0.weight > $1.weight }.prefix(3).map { group in
+            let ns = NSColor(srgbRed: group.r / group.weight, green: group.g / group.weight, blue: group.b / group.weight, alpha: 1)
+            var h: CGFloat = 0, s: CGFloat = 0, v: CGFloat = 0
+            ns.getHue(&h, saturation: &s, brightness: &v, alpha: nil)
+            // Glowing, not muddy: lift the brightness, keep the hue.
+            return Color(hue: h, saturation: min(0.85, s * 1.1), brightness: max(0.55, min(0.95, v * 1.2)))
+        }
     }
 
     /// Draws the image into one pixel and reads its luma.

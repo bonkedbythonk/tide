@@ -466,10 +466,12 @@ final class CoverLightView: NSView {
         // Each blob drifts around its own slow loop, centred on the artwork.
         for (i, blob) in blobs.enumerated() {
             let loop = CAKeyframeAnimation(keyPath: "position")
-            loop.path = CGPath(ellipseIn: CGRect(x: bounds.midX - 170, y: bounds.midY - 130, width: 340, height: 260),
+            // A small loop, so the light stays centred on the cover and only shifts.
+            loop.path = CGPath(ellipseIn: CGRect(x: bounds.midX - 60, y: bounds.midY - 45, width: 120, height: 90),
                                transform: nil)
             loop.duration = 48 + Double(i) * 17
-            loop.timeOffset = Double(i) * 13
+            // Spread evenly around their loops, so they don't bunch up on one side.
+            loop.timeOffset = loop.duration * Double(i) / 3
             loop.repeatCount = .infinity
             loop.calculationMode = .paced
             blob.position = CGPoint(x: bounds.midX, y: bounds.midY)

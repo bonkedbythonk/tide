@@ -207,9 +207,10 @@ final class YTClient {
 
 /// YouTube Music's search filters, as the web app sends them.
 enum SearchKind: String, CaseIterable {
+    // Listed in the order the results show; artists come early so they aren't buried.
     case songs = "EgWKAQIIAWoMEA4QChADEAQQCRAF"
-    case videos = "EgWKAQIQAWoMEA4QChADEAQQCRAF"
     case artists = "EgWKAQIgAWoMEA4QChADEAQQCRAF"
+    case videos = "EgWKAQIQAWoMEA4QChADEAQQCRAF"
     case albums = "EgWKAQIYAWoMEA4QChADEAQQCRAF"
     case playlists = "EgeKAQQoAEABagwQDhAKEAMQBBAJEAU="
 

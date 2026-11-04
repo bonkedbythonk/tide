@@ -162,6 +162,15 @@ final class YTClient {
     /// Puts a song in your YouTube history, which is what Home's "Listen again" and
     /// your recommendations are built from. Streams played through yt-dlp aren't
     /// counted, so this sends the play report YouTube Music's own player sends.
+    func songInfo(_ videoId: String) async -> SongInfo? {
+        guard let player = try? await call("player", ["videoId": videoId]) else { return nil }
+        let details = player["videoDetails"] as? JSON ?? [:]
+        let micro = YTParse.dig(player, "microformat", "microformatDataRenderer") as? JSON ?? [:]
+        let date = (micro["publishDate"] as? String).flatMap { try? Date($0, strategy: .iso8601) }
+        return SongInfo(views: (details["viewCount"] as? String).flatMap { Int($0) }, published: date,
+                        channel: details["author"] as? String, type: details["musicVideoType"] as? String)
+    }
+
     func addToHistory(_ videoId: String) async {
         guard let player = try? await call("player", ["videoId": videoId]),
               let base = YTParse.dig(player, "playbackTracking", "videostatsPlaybackUrl", "baseUrl") as? String,

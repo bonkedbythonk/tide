@@ -19,6 +19,7 @@ import SwiftUI
     @ObservationIgnored private var songIndex: [String: Song] = [:]
     @ObservationIgnored private var loadingPages: Set<String> = []
     @ObservationIgnored private var shelfPages: [String: [ShelfItem]] = [:]
+    @ObservationIgnored private var songInfos: [String: SongInfo] = [:]
     /// Pages fetched fresh this session; others may still be showing the disk copy.
     @ObservationIgnored private var freshPages: Set<String> = []
 
@@ -99,6 +100,14 @@ import SwiftUI
             // With a cached library on screen, a failed refresh just leaves it there.
             if home.isEmpty { state = .failed(error.localizedDescription) }
         }
+    }
+
+    @MainActor
+    func info(_ songID: String) async -> SongInfo? {
+        if let cached = songInfos[songID] { return cached }
+        guard !Demo.isOn, let info = await client.songInfo(songID) else { return nil }
+        songInfos[songID] = info
+        return info
     }
 
     /// Everything in a Home shelf, for its Show all page.

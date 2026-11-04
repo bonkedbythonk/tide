@@ -232,6 +232,7 @@ struct RootView: View {
         .sheet(isPresented: Binding(get: { router.showShortcuts }, set: { router.showShortcuts = $0 })) {
             ShortcutsSheet()
         }
+        .sheet(item: Binding(get: { router.infoSong }, set: { router.infoSong = $0 })) { SongInfoView(song: $0) }
         .onAppear {
             swipe.install(router: router, player: player)
             KeyboardShortcuts.install(player: player, router: router)

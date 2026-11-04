@@ -292,6 +292,7 @@ struct SongMenu: View {
         }
         if songs.count == 1, let song = songs.first {
             Button("Copy Link") { library.copyLink(song.id, song: true) }
+            Button("Song Info") { router.infoSong = song }
         }
         if songs.count == 1, let song = songs.first, song.albumID != nil || song.artistID != nil {
             Divider()

@@ -12,6 +12,10 @@ struct PlayerBar: View {
             NowPlayingInfo().frame(width: 280, alignment: .leading)
             Spacer(minLength: 0)
             TransportControls().frame(minWidth: 320, maxWidth: 540)
+                // The whole middle of the bar, buttons included: a sideways swipe there seeks.
+                .frame(maxHeight: .infinity)
+                .contentShape(Rectangle())
+                .onHover { router.pointerOverProgress = $0 }
             Spacer(minLength: 0)
             PlayerExtras().frame(width: 320, alignment: .trailing)
         }
@@ -20,6 +24,9 @@ struct PlayerBar: View {
         // goes below it and the controls sit midway.
         .padding(.bottom, wallpaper.isActive ? PanelStyle.margin : 0)
         .frame(height: wallpaper.isActive ? PanelStyle.barHeight : 76)
+        // Scrolling up or down anywhere on the bar sets the volume.
+        .contentShape(Rectangle())
+        .onHover { router.pointerOverPlayerBar = $0 }
         // Over a wallpaper it sits on the window's dark frame, like Spotify's.
         .background { if !wallpaper.isActive { Rectangle().fill(.bar) } }
         .environment(\.colorScheme, wallpaper.isActive ? .dark : colorScheme)
@@ -89,6 +96,7 @@ struct TransportControls: View {
         // Songs from Home arrive without a length; show none until mpv knows it.
         let known = player.length > 0
         let duration = known ? player.length : 1
+        let shown = player.scrubPosition ?? player.position
         VStack(spacing: 4) {
             HStack(spacing: 24) {
                 Button { withAnimation(.snappy(duration: 0.45)) { player.shuffle.toggle() } } label: {
@@ -111,9 +119,9 @@ struct TransportControls: View {
             }
             .buttonStyle(.plain)
             HStack(spacing: 8) {
-                Text(known ? formatTime(player.position) : "–:––").frame(width: 40, alignment: .trailing)
+                Text(known ? formatTime(shown) : "–:––").frame(width: 40, alignment: .trailing)
                 Slider(
-                    value: Binding(get: { known ? min(player.position, duration) : 0 }, set: { player.seek($0) }),
+                    value: Binding(get: { known ? min(shown, duration) : 0 }, set: { player.seek($0) }),
                     in: 0...duration
                 )
                 .controlSize(.mini)
@@ -171,10 +179,17 @@ struct PlayerExtras: View {
     }
 
     private func panelButton(_ symbol: String, tab: PanelTab, help: String) -> some View {
-        let active = router.panelTab == tab && (router.showNowPlaying || router.panelVisible)
+        let active = router.panelTab == tab && (router.showNowPlaying ? router.nowPlayingPanel : router.panelVisible)
         return Button {
             if router.showNowPlaying {
-                withAnimation(.snappy) { router.panelTab = tab }
+                withAnimation(.snappy) {
+                    if router.nowPlayingPanel, router.panelTab == tab {
+                        router.nowPlayingPanel = false
+                    } else {
+                        router.panelTab = tab
+                        router.nowPlayingPanel = true
+                    }
+                }
             } else {
                 router.togglePanel(tab)
             }
@@ -214,6 +229,8 @@ struct SoundPopover: View {
                         .monospacedDigit().frame(width: 34, alignment: .trailing)
                 }
             }
+            Toggle("Smart transitions", isOn: $player.smartTransitions)
+                .help("Crossfade on the beat and skip quiet endings and intros (needs ffmpeg). Off for videos.")
             Toggle("Autoplay similar songs", isOn: $player.autoplay)
                 .help("When the queue runs out, keep going with YouTube Music's radio for the last song")
             Toggle("Gapless playback", isOn: $player.gapless)
@@ -230,7 +247,7 @@ struct SoundPopover: View {
                 .font(.caption).foregroundStyle(.secondary)
         }
         .formStyle(.grouped)
-        .frame(width: 360, height: 330)
+        .frame(width: 360, height: 360)
     }
 }
 
@@ -602,6 +619,7 @@ struct NowPlayingView: View {
                     .animation(.snappy(duration: 0.35), value: s.id)
                     .animation(.snappy(duration: 0.35), value: player.videoMode)
 
+                    if router.nowPlayingPanel {
                     VStack(spacing: 8) {
                         PillSwitch(options: [("Lyrics", PanelTab.lyrics), ("Up Next", PanelTab.queue)],
                                    selection: $router.panelTab)
@@ -628,7 +646,11 @@ struct NowPlayingView: View {
                     .animation(.snappy(duration: 0.25), value: router.panelTab)
                     .offset(y: appeared ? 0 : 30)
                     .opacity(appeared ? 1 : 0)
+                    .transition(.opacity.combined(with: .move(edge: .trailing)))
+                    }
                 }
+                // Full width, so the cover sits in the middle once the panel is hidden.
+                .frame(maxWidth: .infinity)
                 .padding(40)
                 .environment(\.colorScheme, .dark)
             } else {
@@ -644,6 +666,18 @@ struct NowPlayingView: View {
             .keyboardShortcut(router.videoFullscreen ? nil : .cancelAction)
             .help("Close (Esc)")
             .padding(12)
+        }
+        .overlay(alignment: .topTrailing) {
+            if player.current != nil {
+                Button { withAnimation(.snappy(duration: 0.35)) { router.nowPlayingPanel.toggle() } } label: {
+                    Image(systemName: "sidebar.right").font(.title3.weight(.semibold)).padding(8)
+                        .foregroundStyle(router.nowPlayingPanel ? Color.primary : Color.secondary)
+                }
+                .buttonStyle(.plain)
+                .help(router.nowPlayingPanel ? "Hide lyrics and Up Next" : "Show lyrics and Up Next")
+                .padding(12)
+                .environment(\.colorScheme, .dark)
+            }
         }
         .onAppear {
             withAnimation(.spring(duration: 0.55, bounce: 0.2).delay(0.05)) { appeared = true }
@@ -681,6 +715,9 @@ struct NowPlayingQueue: View {
         let firstPlayed = player.index - played.count
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 2) {
+              // One block for history and Now Playing: as the stack's first child it is
+              // always built, so the jump to "now" finds its target.
+              VStack(alignment: .leading, spacing: 2) {
                 if !played.isEmpty {
                     Text("Played").font(.headline).foregroundStyle(.secondary).padding(.horizontal, 8)
                     ForEach(Array(played.enumerated()), id: \.offset) { i, s in
@@ -707,6 +744,7 @@ struct NowPlayingQueue: View {
                         .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.12)))
                         .draggable(library.dragPayload([s])) { DragPreview(songs: [s]) }
                 }
+              }
                 HStack {
                     Text("Up Next").font(.headline).foregroundStyle(.secondary)
                     Spacer()
@@ -733,12 +771,72 @@ struct NowPlayingQueue: View {
         }
         .scrollPosition($position, anchor: .top)
         .scrollIndicators(.hidden)
-        .onAppear { position.scrollTo(id: "now", anchor: .top) }
+        // After the first layout pass, so the rows above are measured.
+        .task {
+            await Task.yield()
+            position.scrollTo(id: "now", anchor: .top)
+        }
         .onChange(of: player.current?.id) { position.scrollTo(id: "now", anchor: .top) }
         .onScrollPhaseChange { _, phase in
             // Settle on Now Playing after a scroll back down, or after only peeking.
             guard phase == .idle, !played.isEmpty, nowOffset > 1, movingDown || nowOffset < 60 else { return }
             withAnimation(.spring(duration: 0.35, bounce: 0.15)) { position.scrollTo(id: "now", anchor: .top) }
+        }
+    }
+}
+
+/// Song Info from the right-click menu: what the song is, where it's from, how it's doing.
+struct SongInfoView: View {
+    @Environment(Library.self) private var library
+    @Environment(Player.self) private var player
+    @Environment(Router.self) private var router
+    let song: Song
+    @State private var info: SongInfo?
+
+    var body: some View {
+        let length = player.current?.id == song.id && player.length > 0 ? player.length : song.duration
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(spacing: 14) {
+                Artwork(hue: song.hue, url: song.artwork, side: 64, radius: 8)
+                Text(song.title).font(.title3.bold()).lineLimit(3).textSelection(.enabled)
+            }
+            VStack(alignment: .leading, spacing: 10) {
+                row("Artist") { ArtistLink(song: song) }
+                if !song.album.isEmpty { row("Album") { AlbumLink(song: song) } }
+                if let channel = info?.channel, channel != song.artist { row("Uploaded by") { Text(channel) } }
+                if length > 0 { row("Length") { Text(formatTime(length)) } }
+                if let views = info?.views { row("Views") { Text(views.formatted()) } }
+                if let date = info?.published { row("Released") { Text(date.formatted(date: .long, time: .omitted)) } }
+                if let kind = kindName { row("Type") { Text(kind) } }
+            }
+            HStack {
+                Button { library.copyLink(song.id, song: true) } label: { Label("Copy Link", systemImage: "link") }
+                Spacer()
+                Button("Done") { router.infoSong = nil }.keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(22)
+        .frame(width: 400)
+        .animation(.easeOut(duration: 0.2), value: info != nil)
+        .task(id: song.id) { info = await library.info(song.id) }
+        // The artist and album links open a page; the sheet makes way for it.
+        .onChange(of: router.current) { router.infoSong = nil }
+    }
+
+    private var kindName: String? {
+        switch info?.type ?? song.videoType {
+        case "MUSIC_VIDEO_TYPE_ATV": "Song"
+        case "MUSIC_VIDEO_TYPE_OMV": "Official music video"
+        case "MUSIC_VIDEO_TYPE_UGC": "Video upload"
+        case "MUSIC_VIDEO_TYPE_PODCAST_EPISODE": "Podcast episode"
+        default: nil
+        }
+    }
+
+    private func row<V: View>(_ label: String, @ViewBuilder value: () -> V) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            Text(label).foregroundStyle(.secondary).frame(width: 90, alignment: .leading)
+            value().lineLimit(2)
         }
     }
 }

@@ -31,6 +31,8 @@ enum SleepTimer: String, CaseIterable, Identifiable {
     var isPlaying = false
     var isLoading = false
     var position: TimeInterval = 0
+    /// Where a swipe over the player bar is seeking to, shown until the fingers lift.
+    var scrubPosition: TimeInterval?
     var duration: TimeInterval = 0
     var lastError: String?
     // Player settings are kept between launches.
@@ -62,6 +64,8 @@ enum SleepTimer: String, CaseIterable, Identifiable {
     }
     /// Seconds the end of one song overlaps the start of the next (0 = off).
     var crossfade = Prefs.double("crossfade", 0) { didSet { Prefs.set(crossfade, "crossfade") } }
+    /// Crossfades planned from the music: quiet ends skipped, songs meeting on a beat.
+    var smartTransitions = Prefs.bool("smartTransitions", false) { didSet { Prefs.set(smartTransitions, "smartTransitions") } }
     /// At the end of the queue, keep going with YouTube Music's radio for the last song.
     var autoplay = Prefs.bool("autoplay", true) { didSet { Prefs.set(autoplay, "autoplay") } }
     /// Fetches the radio; set by the app, which owns the YouTube client.
@@ -142,6 +146,13 @@ enum SleepTimer: String, CaseIterable, Identifiable {
     @ObservationIgnored private var outgoing: MpvEngine?
     @ObservationIgnored private var outgoingTimer: Timer?
     @ObservationIgnored private var crossfading = false
+    /// Length of the crossfade under way (planned, or the Crossfade setting).
+    @ObservationIgnored private var fadeSeconds = 0.0
+    /// The outgoing song's level when its crossfade began.
+    @ObservationIgnored private var outgoingLevel = 1.0
+    /// The plan for going from the playing song into the next ("a>b").
+    @ObservationIgnored private var transition: (key: String, plan: TransitionPlan)?
+    @ObservationIgnored private var planningKey: String?
     /// A song restored from last time; nothing is loaded in mpv until Play.
     @ObservationIgnored private var needsLoad = false
     @ObservationIgnored private var radioSeed: String?
@@ -204,9 +215,12 @@ enum SleepTimer: String, CaseIterable, Identifiable {
                 self.fadeInWhenPlaying = false
                 self.fadeLevel = 0
                 self.applyFade()
-                self.fade(to: 1, over: self.crossfading ? self.crossfade : 0.4, always: self.crossfading)
+                if self.crossfading { self.fadeOutOutgoing(over: self.fadeSeconds) }
+                self.fade(to: 1, over: self.crossfading ? self.fadeSeconds : 0.4, always: self.crossfading,
+                          equalPower: self.crossfading)
                 self.crossfading = false
             }
+            self.planTransitionIfDue(at: t)
             self.startCrossfadeIfDue(at: t)
             // Ten seconds in, like YouTube Music's own player, so skipped songs don't count.
             if t > 10, self.addToHistory, !Demo.isOn, let song = self.current, self.reportedPlay != song.id {
@@ -238,12 +252,48 @@ enum SleepTimer: String, CaseIterable, Identifiable {
 
     // MARK: Crossfade
 
+    private var nextSong: Song? {
+        index + 1 < queue.count ? queue[index + 1] : repeatMode == .all ? queue.first : nil
+    }
+
+    private var transitionKey: String? {
+        guard let a = current, let b = nextSong else { return nil }
+        return a.id + ">" + b.id
+    }
+
+    /// A minute before the end, listens to this song's end and the next one's start.
+    /// Late on purpose: skipped songs and reshuffled queues cost nothing.
+    private func planTransitionIfDue(at t: TimeInterval) {
+        guard smartTransitions, !videoMode, repeatMode != .one, length > 30, t >= length - 70,
+              let key = transitionKey, let a = current, let b = nextSong,
+              transition?.key != key, planningKey != key else { return }
+        planningKey = key
+        let length = length
+        let fallback = crossfade > 0 ? crossfade : 6
+        Task { @MainActor [weak self, resolver] in
+            let plan = await TransitionStore.plan(from: a.id, length: length, to: b.id, fallbackFade: fallback) { id in
+                guard let streams = try? await resolver.resolve(id, video: false) else { return nil }
+                return (streams.audio, streams.availableAt)
+            }
+            guard let self, self.planningKey == key else { return }
+            self.planningKey = nil
+            guard let plan else { return TransitionStore.log.info("no plan for \(key, privacy: .public)") }
+            self.transition = (key, plan)
+            TransitionStore.log.info("\(key, privacy: .public): next at \(plan.outAt, format: .fixed(precision: 2)) of \(length, format: .fixed(precision: 0)), from \(plan.inAt, format: .fixed(precision: 2)), fade \(plan.fade, format: .fixed(precision: 2)), on beat \(plan.onBeat)")
+        }
+    }
+
     /// Near the end of a song, starts the next one on the other engine and lets
     /// this one fade out underneath it. Not for videos, repeat-one, or short songs.
     private func startCrossfadeIfDue(at t: TimeInterval) {
-        guard crossfade > 0, outgoing == nil, isPlaying, !videoMode, repeatMode != .one,
-              length > crossfade * 2 + 5, t >= length - crossfade,
+        guard crossfade > 0 || smartTransitions, outgoing == nil, isPlaying, !videoMode, repeatMode != .one,
               index + 1 < queue.count || repeatMode == .all else { return }
+        let plan = smartTransitions && transition?.key == transitionKey ? transition?.plan : nil
+        let seconds = plan?.fade ?? (crossfade > 0 ? crossfade : 6)
+        guard length > seconds * 2 + 5, t >= plan?.outAt ?? length - seconds else { return }
+        if let plan {
+            TransitionStore.log.info("crossfade at \(t, format: .fixed(precision: 2)), planned \(plan.outAt, format: .fixed(precision: 2))")
+        }
         let old = engine
         if engines.count == 1 {
             let second = MpvEngine()
@@ -253,21 +303,29 @@ enum SleepTimer: String, CaseIterable, Identifiable {
         active = 1 - active
         engine.set("mute", isMuted ? "yes" : "no")
         outgoing = old
-        let from = fadeLevel
-        let began = Date()
-        let seconds = crossfade
-        let timer = Timer(timeInterval: 1.0 / 30, repeats: true) { [weak self] timer in
-            let progress = min(1, Date().timeIntervalSince(began) / seconds)
-            _ = old.trySet("ao-volume", String(format: "%.1f", from * (1 - progress) * 100))
-            if progress >= 1 { timer.invalidate(); self?.finishCrossfade() }
-        }
-        RunLoop.main.add(timer, forMode: .common)
-        outgoingTimer = timer
+        outgoingLevel = fadeLevel
+        fadeSeconds = seconds
         crossfading = true
         fadeLevel = 0
         skipForward = true
         index = index + 1 < queue.count ? index + 1 : 0
-        load()
+        load(at: plan?.inAt ?? 0)
+    }
+
+    /// Fades the outgoing song out once the incoming one is audible (it may take a
+    /// second or two to load; fading earlier left a gap). Equal-power curves: the
+    /// old song stays near full while the new one comes up, so there's no dip.
+    private func fadeOutOutgoing(over seconds: TimeInterval) {
+        guard let old = outgoing else { return }
+        let from = outgoingLevel
+        let began = Date()
+        let timer = Timer(timeInterval: 1.0 / 30, repeats: true) { [weak self] timer in
+            let progress = min(1, Date().timeIntervalSince(began) / seconds)
+            _ = old.trySet("ao-volume", String(format: "%.1f", from * cos(progress * .pi / 2) * 100))
+            if progress >= 1 { timer.invalidate(); self?.finishCrossfade() }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        outgoingTimer = timer
     }
 
     /// Stops the outgoing song: at the end of the fade, or at once when you skip,
@@ -357,6 +415,17 @@ enum SleepTimer: String, CaseIterable, Identifiable {
     /// `followLive`: the same track as another kind (song to video, a new quality).
     /// It keeps playing while the new streams load, so the switch picks up from
     /// wherever it has got to by then instead of jumping back.
+    /// Decodes the covers a skip or swipe shows next, at the player bar's and Now
+    /// Playing's sizes, so the new song never flashes the placeholder.
+    private func warmNeighbourCovers() {
+        let urls = [upNext.first, played.last].compactMap { $0?.artwork }
+        Task.detached(priority: .utility) {
+            for url in urls {
+                for side: CGFloat in [52, 340] { _ = await ImageDecodeCache.shared.image(url, maxPixelSize: side * 2) }
+            }
+        }
+    }
+
     private func load(at start: TimeInterval = 0, autoplay: Bool = true, followLive: Bool = false) {
         guard let song = current else {
             engine.stop()
@@ -365,6 +434,7 @@ enum SleepTimer: String, CaseIterable, Identifiable {
         loadToken += 1
         let token = loadToken
         reportedPlay = nil
+        warmNeighbourCovers()
         // A new track plays the way you last chose, except that a song with no music
         // video (only its cover) plays as audio; the next one with a video goes back.
         if !followLive {
@@ -575,7 +645,8 @@ enum SleepTimer: String, CaseIterable, Identifiable {
 
     /// Ramps the volume between silent (0) and the slider's level (1), then runs `done`.
     /// `always`: fade even with smooth transitions off (a crossfade).
-    private func fade(to target: Double, over seconds: Double, always: Bool = false, then done: (() -> Void)? = nil) {
+    private func fade(to target: Double, over seconds: Double, always: Bool = false, equalPower: Bool = false,
+                      then done: (() -> Void)? = nil) {
         fadeTimer?.invalidate()
         guard smoothTransitions || always, seconds > 0 else {
             fadeLevel = target
@@ -588,7 +659,8 @@ enum SleepTimer: String, CaseIterable, Identifiable {
         let timer = Timer(timeInterval: 1.0 / 60, repeats: true) { [weak self] timer in
             guard let self else { return timer.invalidate() }
             let progress = min(1, Date().timeIntervalSince(began) / seconds)
-            self.fadeLevel = from + (target - from) * progress
+            let shaped = equalPower ? sin(progress * .pi / 2) : progress
+            self.fadeLevel = from + (target - from) * shaped
             self.applyVolume()
             if progress >= 1 {
                 timer.invalidate()
@@ -713,11 +785,17 @@ struct TextPrompt {
 @Observable final class Router {
     var current = Route.home
     var prompt: TextPrompt?
+    /// The song whose Song Info sheet is open.
+    var infoSong: Song?
     var backStack: [Route] = []
     var forwardStack: [Route] = []
     var showNowPlaying = false
     var panelVisible = false
     var panelTab = PanelTab.queue
+    /// Lyrics / Up Next beside the cover in Now Playing; off leaves the cover alone.
+    var nowPlayingPanel = Prefs.bool("nowPlayingPanel", true) {
+        didSet { Prefs.set(nowPlayingPanel, "nowPlayingPanel") }
+    }
 
     var videoFullscreen = false
     var showShortcuts = false
@@ -729,6 +807,8 @@ struct TextPrompt {
 
     @ObservationIgnored var pointerOverShelf = false
     @ObservationIgnored var pointerOverPlayerSong = false
+    @ObservationIgnored var pointerOverProgress = false
+    @ObservationIgnored var pointerOverPlayerBar = false
     @ObservationIgnored private var windowWasFullscreen = false
 
     /// Video covers the whole window, and the window goes into its own fullscreen Space.
@@ -791,8 +871,10 @@ struct TextPrompt {
     }
 }
 
-/// Two-finger horizontal swipes: over the player's song they skip tracks,
-/// elsewhere they go back/forward like Safari. Shelves keep their own scrolling.
+/// Two-finger horizontal swipes: over the player's song they skip tracks, over the
+/// progress bar they seek, elsewhere they go back/forward like Safari. Shelves keep
+/// their own scrolling. Scrolling up or down over the player bar or Now Playing's
+/// cover sets the volume.
 final class SwipeTracker {
     private var accumulated: CGFloat = 0
     private var vertical: CGFloat = 0
@@ -810,7 +892,29 @@ final class SwipeTracker {
     }
 
     private func handle(_ e: NSEvent, router: Router, player: Player) {
-        guard e.hasPreciseScrollingDeltas, e.momentumPhase.isEmpty else { return }
+        guard e.momentumPhase.isEmpty else { return }
+        // A seek swipe lands when the fingers lift, wherever the pointer is by then.
+        if let target = player.scrubPosition, e.phase == .ended || e.phase == .cancelled {
+            player.seek(target)
+            player.scrubPosition = nil
+            return
+        }
+        if router.pointerOverPlayerSong || router.pointerOverPlayerBar, abs(e.scrollingDeltaY) > abs(e.scrollingDeltaX) {
+            // Fingers or wheel up is louder. A wheel notch is 5%, a trackpad swipe smooth.
+            let up = e.isDirectionInvertedFromDevice ? -e.scrollingDeltaY : e.scrollingDeltaY
+            player.volume = min(1, max(0, player.volume + up * (e.hasPreciseScrollingDeltas ? 0.004 : 0.05)))
+            return
+        }
+        guard e.hasPreciseScrollingDeltas else { return }
+        if router.pointerOverProgress {
+            guard player.length > 0, abs(e.scrollingDeltaX) > abs(e.scrollingDeltaY) else { return }
+            // Fingers right moves forward; a full swipe covers roughly a fifth of the song.
+            // The bar follows every event; the audio seeks once, when the fingers lift.
+            let forward = e.isDirectionInvertedFromDevice ? e.scrollingDeltaX : -e.scrollingDeltaX
+            let from = player.scrubPosition ?? player.position
+            player.scrubPosition = min(player.length, max(0, from + forward * max(0.1, player.length / 1500)))
+            return
+        }
         if e.phase == .began {
             accumulated = 0
             vertical = 0

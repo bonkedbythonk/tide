@@ -107,6 +107,15 @@ enum PanelTab: Hashable {
     case queue, lyrics
 }
 
+/// The extra details YouTube's player knows about a track (Song Info).
+struct SongInfo {
+    var views: Int?
+    var published: Date?
+    var channel: String?
+    /// MUSIC_VIDEO_TYPE_ATV (song), _OMV (official video), _UGC (someone's upload) ...
+    var type: String?
+}
+
 func formatTime(_ t: TimeInterval) -> String {
     let s = max(0, Int(t))
     return String(format: "%d:%02d", s / 60, s % 60)

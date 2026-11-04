@@ -93,6 +93,7 @@ struct ShelfContent: View {
                                   },
                                   play: { player.playRadio(s) },
                                   prefetch: { player.prefetch(s, video: player.prefersVideo) })
+                        .contextMenu { SongMenu(songs: [s]) }
                     case .media(let m):
                         MediaItemCard(item: m)
                     }

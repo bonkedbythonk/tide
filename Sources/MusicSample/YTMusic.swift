@@ -405,6 +405,8 @@ enum YTParse {
             + findAll("musicImmersiveCarouselShelfRenderer", in: json)
         return shelves.compactMap { shelf in
             let title = text(first("title", in: shelf["header"]))
+            let moreID = dig(first("moreContentButton", in: shelf["header"]), "buttonRenderer", "navigationEndpoint",
+                             "browseEndpoint", "browseId") as? String
             let items: [ShelfItem] = (shelf["contents"] as? [JSON] ?? []).compactMap { item in
                 if let row = item["musicResponsiveListItemRenderer"] as? JSON {
                     return song(row).map { .song($0, video: false) }
@@ -412,7 +414,7 @@ enum YTParse {
                 if let twoRow = item["musicTwoRowItemRenderer"] as? JSON { return card(twoRow) }
                 return nil
             }
-            return title.isEmpty || items.isEmpty ? nil : HomeShelf(title: title, items: items)
+            return title.isEmpty || items.isEmpty ? nil : HomeShelf(title: title, items: items, moreID: moreID)
         }
     }
 

@@ -288,6 +288,7 @@ struct DetailView: View {
                 case .liked: PageView(id: Library.likedID)
                 case .settings: SettingsPage()
                 case .page(let id): PageView(id: id)
+                case .shelf(let id, let title): ShelfPageView(id: id, title: title)
                 }
             }
         }
@@ -308,6 +309,7 @@ struct DetailView: View {
         case .history: "History"
         case .settings: "Settings"
         case .page(let id): library.pages[id]?.title ?? ""
+        case .shelf(_, let title): title
         }
     }
 }

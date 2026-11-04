@@ -31,12 +31,6 @@ struct HomeView: View {
                         ShelfContent(shelf: shelf)
                     }
                 }
-                // Reaching the bottom asks YouTube for the next few sections.
-                Color.clear
-                    .frame(height: 1)
-                    .onScrollVisibilityChange { visible in
-                        if visible { Task { await library.loadMoreHome(pages: 2) } }
-                    }
             }
             .padding(.top, 50)
             .padding(.bottom, 20)
@@ -81,25 +75,70 @@ struct ShelfContent: View {
             SongGrid(songs: shelf.songs)
         } else {
             Shelf {
-                ForEach(shelf.items) { item in
-                    switch item {
-                    case .song(let s, let video):
-                        MediaCard(title: s.title, subtitle: s.artist, hue: s.hue, artwork: s.artwork,
-                                  width: video ? 270 : 165, wide: video,
-                                  symbol: video ? "play.rectangle.fill" : "music.note",
-                                  open: {
-                                      player.playRadio(s)
-                                      if video { withAnimation(.spring(duration: 0.45, bounce: 0)) { router.showNowPlaying = true } }
-                                  },
-                                  play: { player.playRadio(s) },
-                                  prefetch: { player.prefetch(s, video: player.prefersVideo) })
-                        .contextMenu { SongMenu(songs: [s]) }
-                    case .media(let m):
-                        MediaItemCard(item: m)
-                    }
-                }
+                ForEach(shelf.items) { ShelfItemCard(item: $0) }
             }
         }
+    }
+}
+
+/// One card on a shelf: a song or video plays its radio, anything else opens.
+struct ShelfItemCard: View {
+    @Environment(Player.self) private var player
+    @Environment(Router.self) private var router
+    let item: ShelfItem
+    /// Every card the same square, as on Library (Show all pages).
+    var square = false
+
+    var body: some View {
+        switch item {
+        case .song(let s, let video):
+            MediaCard(title: s.title, subtitle: s.artist, hue: s.hue, artwork: s.artwork,
+                      width: video && !square ? 270 : 165, wide: video && !square,
+                      symbol: video ? "play.rectangle.fill" : "music.note",
+                      open: {
+                          player.playRadio(s)
+                          if video { withAnimation(.spring(duration: 0.45, bounce: 0)) { router.showNowPlaying = true } }
+                      },
+                      play: { player.playRadio(s) },
+                      prefetch: { player.prefetch(s, video: player.prefersVideo) })
+            .contextMenu { SongMenu(songs: [s]) }
+        case .media(let m):
+            MediaItemCard(item: m)
+        }
+    }
+}
+
+/// A Home shelf's Show all: everything YouTube has for it, laid out like Library.
+struct ShelfPageView: View {
+    @Environment(Library.self) private var library
+    let id: String
+    let title: String
+    @State private var items: [ShelfItem]?
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text(title).font(.system(size: 34, weight: .bold))
+                Spacer()
+            }
+            .padding(.horizontal, 24)
+            .padding(.top, 56)
+            .padding(.bottom, 8)
+            if let items {
+                ScrollView {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 170), spacing: 20, alignment: .top)],
+                              alignment: .leading, spacing: 24) {
+                        ForEach(items) { ShelfItemCard(item: $0, square: true) }
+                    }
+                    .padding(24)
+                }
+                .transition(.opacity)
+            } else {
+                ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+        .animation(.snappy(duration: 0.25), value: items == nil)
+        .task(id: id) { items = await library.shelfPage(id) }
     }
 }
 
@@ -124,6 +163,7 @@ struct MediaItemCard: View {
 struct SectionHeader: View {
     @Environment(HomeConfig.self) private var home
     @Environment(Player.self) private var player
+    @Environment(Router.self) private var router
     let shelf: HomeShelf
     let customize: () -> Void
 
@@ -131,6 +171,10 @@ struct SectionHeader: View {
         HStack(spacing: 10) {
             Text(shelf.title).font(.title2.bold())
             Spacer()
+            if let moreID = shelf.moreID {
+                Button { router.go(.shelf(moreID, shelf.title)) } label: { Text("Show all") }
+                    .buttonStyle(PillButtonStyle(prominent: false))
+            }
             if !shelf.songs.isEmpty {
                 Button { player.playAll(shelf.songs) } label: {
                     Label("Play all", systemImage: "play.fill")

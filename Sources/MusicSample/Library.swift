@@ -17,9 +17,8 @@ import SwiftUI
 
     @ObservationIgnored let client = YTClient()
     @ObservationIgnored private var songIndex: [String: Song] = [:]
-    @ObservationIgnored private var homeContinuation: String?
-    @ObservationIgnored private var loadingHome = false
     @ObservationIgnored private var loadingPages: Set<String> = []
+    @ObservationIgnored private var shelfPages: [String: [ShelfItem]] = [:]
     /// Pages fetched fresh this session; others may still be showing the disk copy.
     @ObservationIgnored private var freshPages: Set<String> = []
 
@@ -77,14 +76,23 @@ import SwiftUI
             async let playlistJSON = client.browse("FEmusic_liked_playlists")
             async let albumJSON = client.browse("FEmusic_liked_albums")
             let h = try await homeJSON
-            home = YTParse.shelves(h)
-            homeContinuation = YTParse.continuation(h)
+            var shelves = YTParse.shelves(h)
+            // The very first load shows the top sections at once; after that Home changes
+            // only once everything is in, so a refresh doesn't shift the page repeatedly.
+            if home.isEmpty { home = shelves }
+            // YouTube sends Home a few sections at a time (about 6 pages).
+            var token = YTParse.continuation(h)
+            for _ in 0..<10 {
+                guard let next = token, let json = try? await client.more(next, homeStyle: true) else { break }
+                shelves += YTParse.shelves(json).filter { s in !shelves.contains { $0.title == s.title } }
+                token = YTParse.continuation(json)
+            }
+            home = shelves
             playlists = YTParse.cards(try await playlistJSON)
                 .filter { $0.id.hasPrefix("VL") && $0.id != Self.likedID && $0.id != "VLSE" }
             savedAlbums = YTParse.cards(try await albumJSON).filter { $0.kind == .album }
             home.forEach { $0.songs.forEach(remember) }
             state = .ready
-            await loadMoreHome(pages: 3)
             DiskCache.save(Snapshot(home: home, playlists: playlists, savedAlbums: savedAlbums), "library")
             if let likedPage = await page(Self.likedID) { liked = Set(likedPage.songs.map(\.id)) }
         } catch {
@@ -93,20 +101,15 @@ import SwiftUI
         }
     }
 
-    /// YouTube sends Home a few sections at a time.
+    /// Everything in a Home shelf, for its Show all page.
     @MainActor
-    func loadMoreHome(pages: Int) async {
-        guard !loadingHome else { return }
-        loadingHome = true
-        defer { loadingHome = false }
-        for _ in 0..<pages {
-            guard let token = homeContinuation,
-                  let json = try? await client.more(token, homeStyle: true) else { return }
-            let more = YTParse.shelves(json).filter { s in !home.contains { $0.title == s.title } }
-            more.forEach { $0.songs.forEach(remember) }
-            home += more
-            homeContinuation = YTParse.continuation(json)
-        }
+    func shelfPage(_ id: String) async -> [ShelfItem] {
+        if let cached = shelfPages[id] { return cached }
+        guard let json = try? await client.browse(id) else { return [] }
+        let items = YTParse.findAll("musicTwoRowItemRenderer", in: json).compactMap(YTParse.card)
+        items.forEach { if case .song(let s, _) = $0 { remember(s) } }
+        shelfPages[id] = items
+        return items
     }
 
     /// A playlist, album, mix or artist page, with every song (up to 2,000).
@@ -218,6 +221,12 @@ import SwiftUI
     func song(_ id: String) -> Song? { songIndex[id] }
     var knownSongs: Dictionary<String, Song>.Values { songIndex.values }
     func songs(_ ids: [String]) -> [Song] { ids.compactMap { songIndex[$0] } }
+    /// A drag of songs that may not be on any page (the queue, Now Playing), so a
+    /// playlist they're dropped on can find them.
+    func dragPayload(_ songs: [Song]) -> String {
+        songs.forEach(remember)
+        return SongDrag.payload(songs.map(\.id))
+    }
     func playlist(_ id: String) -> MediaItem? { playlists.first { $0.id == id } }
 
     func isLiked(_ id: String) -> Bool { liked.contains(id) }

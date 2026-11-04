@@ -53,6 +53,8 @@ enum ShelfItem: Identifiable, Hashable, Codable {
 struct HomeShelf: Identifiable, Codable {
     let title: String
     let items: [ShelfItem]
+    /// YouTube's "More" page for the shelf (Listen again, Mixed for you, ...).
+    var moreID: String?
 
     var id: String { title }
     var songs: [Song] {
@@ -97,6 +99,8 @@ struct LyricLine: Hashable, Codable {
 enum Route: Hashable {
     case home, search, liked, library, history, settings
     case page(String)
+    /// A Home shelf's Show all page: its browse id and title.
+    case shelf(String, String)
 }
 
 enum PanelTab: Hashable {

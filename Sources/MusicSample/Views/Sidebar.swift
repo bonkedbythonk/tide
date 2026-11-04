@@ -3,6 +3,8 @@ import SwiftUI
 struct SidebarView: View {
     @Environment(Library.self) private var library
     @Environment(Router.self) private var router
+    @State private var playlistsOpen = Prefs.bool("playlistsOpen", true)
+    @State private var headingHovered = false
 
     var body: some View {
         List {
@@ -20,17 +22,37 @@ struct SidebarView: View {
             // Its own heading, not a section header: the system's collapse arrow, which
             // appears on hover, kept pushing the + aside.
             HStack {
-                Text("Playlists").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+                // Clicking the heading folds the list away (the arrow stays put, left of
+                // the title, so it never pushes the + aside).
+                Button {
+                    withAnimation(.snappy) { playlistsOpen.toggle() }
+                    Prefs.set(playlistsOpen, "playlistsOpen")
+                } label: {
+                    HStack(spacing: 4) {
+                        Text("Playlists").font(.system(size: 11, weight: .semibold))
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 9, weight: .semibold))
+                            .rotationEffect(.degrees(playlistsOpen ? 90 : 0))
+                    }
+                    .foregroundStyle(.secondary)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help(playlistsOpen ? "Hide playlists" : "Show playlists")
                 Spacer()
                 Button { router.newPlaylist(library) } label: { Image(systemName: "plus") }
                     .buttonStyle(.borderless)
                     .foregroundStyle(.secondary)
                     .help("New playlist")
+                    // Faded, not removed, so nothing beside it moves when it appears.
+                    .opacity(headingHovered ? 1 : 0)
+                    .animation(.easeOut(duration: 0.15), value: headingHovered)
             }
+            .onHover { headingHovered = $0 }
             .padding(.top, 10)
             .padding(.leading, 10)
             .selectionDisabled()
-            ForEach(library.playlists) { p in
+            ForEach(playlistsOpen ? library.playlists : []) { p in
                 SidebarRow(route: .page(p.id), onDrop: { library.add($0, to: p.id) }) {
                     Label {
                         Text(p.title)
@@ -54,6 +76,7 @@ struct SidebarView: View {
                     } label: {
                         Label("Refresh", systemImage: "arrow.clockwise")
                     }
+                    .foregroundStyle(.secondary)
                     Spacer()
                     Button { router.go(.settings) } label: {
                         Image(systemName: "gearshape")
@@ -65,9 +88,12 @@ struct SidebarView: View {
                         Button("Sign Out") { Task { await library.signOut() } }
                     } label: {
                         Image(systemName: "person.crop.circle")
+                            .foregroundStyle(.secondary)
                     }
                     .menuStyle(.borderlessButton)
                     .menuIndicator(.hidden)
+                    // A borderless menu draws its label in the tint, not the label's colour.
+                    .tint(.secondary)
                     .fixedSize()
                 }
                 .buttonStyle(.borderless)

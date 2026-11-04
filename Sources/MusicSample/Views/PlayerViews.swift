@@ -156,7 +156,7 @@ struct PlayerExtras: View {
                     .scaledToFit()
                     // Measured against the symbols beside it: about 15 pt wide, 12 tall.
                     .frame(width: 15, height: 15)
-                    .foregroundStyle(player.discordPresence ? accent : Color.secondary)
+                    .foregroundStyle(player.discordPresence ? Color.primary : Color.secondary)
             }
             .help(player.discordPresence ? "Showing what's playing on Discord" : "Not showing on Discord")
             PopoverButton(symbol: "slider.vertical.3", help: "Sound") { SoundPopover() }
@@ -179,7 +179,7 @@ struct PlayerExtras: View {
                 router.togglePanel(tab)
             }
         } label: {
-            Image(systemName: symbol).foregroundStyle(active ? accent : Color.secondary)
+            Image(systemName: symbol).foregroundStyle(active ? Color.primary : Color.secondary)
         }
         .help(help)
     }
@@ -501,6 +501,7 @@ final class CoverLightView: NSView {
 }
 
 struct NowPlayingView: View {
+    @Environment(Library.self) private var library
     @Environment(Player.self) private var player
     @Environment(Router.self) private var router
     @Environment(WallpaperStore.self) private var wallpaper
@@ -566,6 +567,7 @@ struct NowPlayingView: View {
                         }
                         .id("\(s.id)-\(player.videoMode)")
                         .contextMenu { SongMenu(songs: [s]) }
+                        .draggable(library.dragPayload([s])) { DragPreview(songs: [s]) }
                         .background { if !player.videoMode { CoverLight().frame(width: 820, height: 820) } }
                         .transition(.push(from: player.skipForward ? .trailing : .leading))
                         .scaleEffect(appeared ? 1 : 0.85)
@@ -585,6 +587,7 @@ struct NowPlayingView: View {
                             .font(.title3).foregroundStyle(.secondary).lineLimit(1)
                         }
                         .contextMenu { SongMenu(songs: [s]) }
+                        .draggable(library.dragPayload([s])) { DragPreview(songs: [s]) }
                         .id(s.id)
                         .transition(.opacity)
                         HStack(spacing: 18) {
@@ -663,17 +666,46 @@ struct NowPlayingView: View {
 }
 
 /// Up Next inside Now Playing: transparent rows on the album colour, no list chrome.
+/// What already played sits above Now Playing, out of view until you scroll up; a
+/// scroll back down (or a small peek) settles on Now Playing again.
 struct NowPlayingQueue: View {
+    @Environment(Library.self) private var library
     @Environment(Player.self) private var player
+    @State private var position = ScrollPosition(idType: String.self)
+    /// How far Now Playing sits below the top: more than 0 while history shows.
+    @State private var nowOffset: CGFloat = 0
+    @State private var movingDown = false
 
     var body: some View {
+        let played = player.played.suffix(50)
+        let firstPlayed = player.index - played.count
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 2) {
+                if !played.isEmpty {
+                    Text("Played").font(.headline).foregroundStyle(.secondary).padding(.horizontal, 8)
+                    ForEach(Array(played.enumerated()), id: \.offset) { i, s in
+                        QueueRow(song: s, current: false)
+                            .padding(8)
+                            .opacity(0.6)
+                            .contentShape(Rectangle())
+                            .modifier(HoverHighlight())
+                            .onTapGesture { player.jump(to: firstPlayed + i) }
+                            .draggable(library.dragPayload([s])) { DragPreview(songs: [s]) }
+                            .contextMenu { SongMenu(songs: [s]) }
+                    }
+                    Color.clear.frame(height: 12)
+                }
                 if let s = player.current {
                     Text("Now Playing").font(.headline).foregroundStyle(.secondary).padding(.horizontal, 8)
+                        .id("now")
+                        .onGeometryChange(for: CGFloat.self) { $0.frame(in: .scrollView).minY } action: { y in
+                            movingDown = y < nowOffset
+                            nowOffset = y
+                        }
                     QueueRow(song: s, current: true)
                         .padding(8)
                         .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.12)))
+                        .draggable(library.dragPayload([s])) { DragPreview(songs: [s]) }
                 }
                 HStack {
                     Text("Up Next").font(.headline).foregroundStyle(.secondary)
@@ -692,13 +724,22 @@ struct NowPlayingQueue: View {
                         .contentShape(Rectangle())
                         .modifier(HoverHighlight())
                         .onTapGesture { player.jump(to: player.index + 1 + i) }
+                        .draggable(library.dragPayload([s])) { DragPreview(songs: [s]) }
                         .contextMenu { SongMenu(songs: [s], upNextIndex: i) }
                 }
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 16)
         }
+        .scrollPosition($position, anchor: .top)
         .scrollIndicators(.hidden)
+        .onAppear { position.scrollTo(id: "now", anchor: .top) }
+        .onChange(of: player.current?.id) { position.scrollTo(id: "now", anchor: .top) }
+        .onScrollPhaseChange { _, phase in
+            // Settle on Now Playing after a scroll back down, or after only peeking.
+            guard phase == .idle, !played.isEmpty, nowOffset > 1, movingDown || nowOffset < 60 else { return }
+            withAnimation(.spring(duration: 0.35, bounce: 0.15)) { position.scrollTo(id: "now", anchor: .top) }
+        }
     }
 }
 

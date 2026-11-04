@@ -165,6 +165,8 @@ enum SleepTimer: String, CaseIterable, Identifiable {
 
     var current: Song? { queue.indices.contains(index) ? queue[index] : nil }
     var upNext: [Song] { queue.indices.contains(index) ? Array(queue[(index + 1)...]) : [] }
+    /// What played before the current song, oldest first.
+    var played: [Song] { Array(queue.prefix(min(index, queue.count))) }
     /// mpv's duration once known; Home items arrive without one.
     var length: TimeInterval { duration > 0 ? duration : (current?.duration ?? 0) }
 

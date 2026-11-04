@@ -22,8 +22,12 @@ final class MpvMetalView: NSView {
         super.init(frame: frame)
         metalLayer.backgroundColor = NSColor.black.cgColor
         metalLayer.contentsScale = 2
+        // mpv can draw a frame at the old size while the stage changes shape (a square
+        // cover becoming a wide video); clipped, it never spills over the controls.
+        metalLayer.masksToBounds = true
         layer = metalLayer
         wantsLayer = true
+        clipsToBounds = true
     }
 
     required init?(coder: NSCoder) { fatalError("unused") }

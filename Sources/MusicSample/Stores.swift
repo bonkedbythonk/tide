@@ -65,7 +65,12 @@ enum SleepTimer: String, CaseIterable, Identifiable {
     /// Seconds the end of one song overlaps the start of the next (0 = off).
     var crossfade = Prefs.double("crossfade", 0) { didSet { Prefs.set(crossfade, "crossfade") } }
     /// Crossfades planned from the music: quiet ends skipped, songs meeting on a beat.
-    var smartTransitions = Prefs.bool("smartTransitions", false) { didSet { Prefs.set(smartTransitions, "smartTransitions") } }
+    var smartTransitions = Prefs.bool("smartTransitions", false) {
+        didSet {
+            Prefs.set(smartTransitions, "smartTransitions")
+            if !smartTransitions { cancelPrepared() }
+        }
+    }
     /// At the end of the queue, keep going with YouTube Music's radio for the last song.
     var autoplay = Prefs.bool("autoplay", true) { didSet { Prefs.set(autoplay, "autoplay") } }
     /// Fetches the radio; set by the app, which owns the YouTube client.
@@ -153,6 +158,14 @@ enum SleepTimer: String, CaseIterable, Identifiable {
     /// The plan for going from the playing song into the next ("a>b").
     @ObservationIgnored private var transition: (key: String, plan: TransitionPlan)?
     @ObservationIgnored private var planningKey: String?
+    /// The next song loaded paused on the other engine, waiting for its beat.
+    @ObservationIgnored private var prepared: (key: String, engine: MpvEngine, gain: Double, ready: Bool)?
+    @ObservationIgnored private var preparedStart: DispatchWorkItem?
+    /// A beat-matched mix's bass swap and speed ease, stopped if the mix is cut short.
+    @ObservationIgnored private var mixTimers: [Timer] = []
+    /// How long a paused engine takes to be heard after unpausing (s), learned from
+    /// each mix and taken off the start time so the beats land together.
+    @ObservationIgnored private var startLead = Prefs.double("mixStartLead", 0.05)
     /// A song restored from last time; nothing is loaded in mpv until Play.
     @ObservationIgnored private var needsLoad = false
     @ObservationIgnored private var radioSeed: String?
@@ -196,7 +209,13 @@ enum SleepTimer: String, CaseIterable, Identifiable {
     /// crossfade is ignored, its end included.
     private func wire(_ e: MpvEngine) {
         e.onFileLoaded = { [weak self, unowned e] in
-            guard let self, e === self.engine else { return }
+            guard let self else { return }
+            if let p = self.prepared, p.engine === e {
+                self.prepared?.ready = true
+                if self.transition?.key == p.key, self.transition?.plan.matched == true { e.setBass(-24) }
+                return
+            }
+            guard e === self.engine else { return }
             self.awaitingFile = false
         }
         e.onVideoAspect = { [weak self, unowned e] aspect in
@@ -221,6 +240,7 @@ enum SleepTimer: String, CaseIterable, Identifiable {
                 self.crossfading = false
             }
             self.planTransitionIfDue(at: t)
+            self.prepareIncomingIfDue(at: t)
             self.startCrossfadeIfDue(at: t)
             // Ten seconds in, like YouTube Music's own player, so skipped songs don't count.
             if t > 10, self.addToHistory, !Demo.isOn, let song = self.current, self.reportedPlay != song.id {
@@ -261,10 +281,10 @@ enum SleepTimer: String, CaseIterable, Identifiable {
         return a.id + ">" + b.id
     }
 
-    /// A minute before the end, listens to this song's end and the next one's start.
+    /// 100 s before the end, listens to this song's end and the next one's start.
     /// Late on purpose: skipped songs and reshuffled queues cost nothing.
     private func planTransitionIfDue(at t: TimeInterval) {
-        guard smartTransitions, !videoMode, repeatMode != .one, length > 30, t >= length - 70,
+        guard smartTransitions, !videoMode, repeatMode != .one, length > 30, t >= length - 100,
               let key = transitionKey, let a = current, let b = nextSong,
               transition?.key != key, planningKey != key else { return }
         planningKey = key
@@ -289,18 +309,19 @@ enum SleepTimer: String, CaseIterable, Identifiable {
         guard crossfade > 0 || smartTransitions, outgoing == nil, isPlaying, !videoMode, repeatMode != .one,
               index + 1 < queue.count || repeatMode == .all else { return }
         let plan = smartTransitions && transition?.key == transitionKey ? transition?.plan : nil
+        if let p = prepared {
+            // The pre-loaded song starts itself on the beat; only if it still isn't
+            // ready half a second late does the ordinary crossfade take over.
+            if p.key == transitionKey, let plan, t < plan.outAt + 0.5 { return }
+            cancelPrepared()
+        }
         let seconds = plan?.fade ?? (crossfade > 0 ? crossfade : 6)
         guard length > seconds * 2 + 5, t >= plan?.outAt ?? length - seconds else { return }
         if let plan {
             TransitionStore.log.info("crossfade at \(t, format: .fixed(precision: 2)), planned \(plan.outAt, format: .fixed(precision: 2))")
         }
         let old = engine
-        if engines.count == 1 {
-            let second = MpvEngine()
-            wire(second)
-            engines.append(second)
-        }
-        active = 1 - active
+        active = engines.firstIndex { $0 === otherEngine() } ?? active
         engine.set("mute", isMuted ? "yes" : "no")
         outgoing = old
         outgoingLevel = fadeLevel
@@ -322,19 +343,184 @@ enum SleepTimer: String, CaseIterable, Identifiable {
         let timer = Timer(timeInterval: 1.0 / 30, repeats: true) { [weak self] timer in
             let progress = min(1, Date().timeIntervalSince(began) / seconds)
             _ = old.trySet("ao-volume", String(format: "%.1f", from * cos(progress * .pi / 2) * 100))
-            if progress >= 1 { timer.invalidate(); self?.finishCrossfade() }
+            if progress >= 1 { timer.invalidate(); self?.finishCrossfade(natural: true) }
         }
         RunLoop.main.add(timer, forMode: .common)
         outgoingTimer = timer
     }
 
     /// Stops the outgoing song: at the end of the fade, or at once when you skip,
-    /// pause or pick something else mid-crossfade.
-    private func finishCrossfade() {
+    /// pause or pick something else mid-crossfade. Cut short, a beat-matched mix's
+    /// speed and bass go straight back to normal; finished, the speed eases back.
+    private func finishCrossfade(natural: Bool = false) {
         outgoingTimer?.invalidate()
         outgoingTimer = nil
         outgoing?.stop()
+        outgoing?.resetTransition()
         outgoing = nil
+        if !natural {
+            mixTimers.forEach { $0.invalidate() }
+            mixTimers = []
+            engine.resetTransition()
+        }
+    }
+
+    /// The other engine, made the first time a crossfade needs it.
+    private func otherEngine() -> MpvEngine {
+        if engines.count == 1 {
+            let second = MpvEngine()
+            wire(second)
+            engines.append(second)
+        }
+        return engines[1 - active]
+    }
+
+    /// Six seconds before a planned transition, loads the next song paused at its
+    /// starting beat on the other engine, silent. Songs that would play as videos
+    /// keep the ordinary crossfade.
+    private func prepareIncomingIfDue(at t: TimeInterval) {
+        if let p = prepared, p.key != transitionKey { cancelPrepared() }
+        guard smartTransitions, prepared == nil, outgoing == nil, isPlaying, !videoMode,
+              let key = transitionKey, let plan = transition?.plan, transition?.key == key,
+              let b = nextSong, !(prefersVideo && b.hasVideo),
+              t >= plan.outAt - 6, t < plan.outAt - 1.5 else {
+            schedulePreparedStart(at: t)
+            return
+        }
+        let incoming = otherEngine()
+        incoming.resetTransition()
+        incoming.set("volume", "0")
+        _ = incoming.trySet("ao-volume", "0")
+        incoming.set("mute", isMuted ? "yes" : "no")
+        prepared = (key, incoming, 0, false)
+        Task { @MainActor [weak self, resolver] in
+            guard let streams = try? await resolver.resolve(b.id, video: false) else { return }
+            let wait = streams.availableAt.timeIntervalSinceNow + 0.2
+            if wait > 0 { try? await Task.sleep(for: .seconds(wait)) }
+            guard let self, let p = self.prepared, p.key == key, p.engine === incoming else { return }
+            self.prepared?.gain = streams.gainDb
+            // The song that's leaving bends to the new one's tempo, not the other way
+            // round: the new song then never has to change speed, which you'd hear.
+            if plan.matched { self.rampSpeed(of: self.engine, to: 1 / plan.speed, over: 4) }
+            incoming.load(audio: streams.audio, video: nil, start: plan.inAt, paused: true,
+                          gainDb: self.matchLoudness ? streams.gainDb : 0)
+        }
+    }
+
+    /// Within a second of the planned beat, sets a timer for that exact moment:
+    /// waiting for the next position report would land tens of milliseconds off.
+    private func schedulePreparedStart(at t: TimeInterval) {
+        guard let p = prepared, p.ready, preparedStart == nil, p.key == transitionKey,
+              let plan = transition?.plan, t >= plan.outAt - 1 else { return }
+        let speed = max(0.5, engine.double("speed") ?? 1)
+        let work = DispatchWorkItem { [weak self] in self?.startPrepared() }
+        preparedStart = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + max(0, (plan.outAt - t) / speed - startLead), execute: work)
+    }
+
+    private func cancelPrepared() {
+        preparedStart?.cancel()
+        preparedStart = nil
+        guard let p = prepared else { return }
+        prepared = nil
+        if outgoing == nil {
+            mixTimers.forEach { $0.invalidate() }
+            mixTimers = []
+            engine.set("speed", "1")
+        }
+        if p.engine !== engine {
+            p.engine.stop()
+            p.engine.resetTransition()
+        }
+    }
+
+    /// The planned beat: the pre-loaded song starts, both fade on equal-power curves,
+    /// and in a beat-matched mix the bass swaps halfway.
+    private func startPrepared() {
+        preparedStart = nil
+        guard let p = prepared, p.ready, p.key == transitionKey, let plan = transition?.plan,
+              isPlaying, outgoing == nil, !videoMode,
+              let slot = engines.firstIndex(where: { $0 === p.engine }), let song = nextSong else {
+            return cancelPrepared()
+        }
+        prepared = nil
+        let old = engine
+        outgoing = old
+        outgoingLevel = fadeLevel
+        fadeTimer?.invalidate()
+        fadeLevel = 0
+        active = slot
+        applyVolume()
+        p.engine.set("pause", "no")
+        // In real seconds: the outgoing song runs at its bent tempo during the mix.
+        let seconds = plan.matched ? plan.fade * plan.speed : plan.fade
+        fadeSeconds = seconds
+        crossfading = false
+        skipForward = true
+        index = index + 1 < queue.count ? index + 1 : 0
+        // What load() would have set up for the new song, without loading it again.
+        loadToken += 1
+        reportedPlay = nil
+        needsLoad = false
+        isLoading = false
+        isPlaying = true
+        awaitingFile = false
+        fadeInWhenPlaying = false
+        advancingNaturally = false
+        position = plan.inAt
+        livePosition = plan.inAt
+        duration = p.engine.double("duration") ?? song.duration
+        lastError = nil
+        currentGain = p.gain
+        warmNeighbourCovers()
+        publishNowPlaying()
+        Task { @MainActor [weak self] in await self?.afterTrackStarted(video: false, height: self?.videoQuality ?? 1080) }
+        fade(to: 1, over: seconds, always: true, equalPower: true)
+        fadeOutOutgoing(over: seconds)
+        if plan.matched { swapBass(after: seconds / 2, over: plan.beat * plan.speed, from: old, to: p.engine) }
+        // How far apart the two songs' beats really landed (both started on a beat).
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+            guard let a = old.double("time-pos"), let b = p.engine.double("time-pos") else { return }
+            let offset = ((a - plan.outAt) * plan.speed - (b - plan.inAt)) * 1000
+            // Positive: the new song was heard late. Fold that into the next start.
+            if let self, abs(offset) < 300 {
+                self.startLead = min(0.25, max(0, self.startLead + 0.5 * offset / 1000))
+                Prefs.set(self.startLead, "mixStartLead")
+            }
+            TransitionStore.log.info("mix started, beats \(offset, format: .fixed(precision: 0)) ms apart, speed \(plan.speed, format: .fixed(precision: 3)), matched \(plan.matched), next lead \((self?.startLead ?? 0) * 1000, format: .fixed(precision: 0)) ms")
+        }
+    }
+
+    /// Hands the low end from the outgoing song to the incoming one over a beat.
+    private func swapBass(after delay: TimeInterval, over seconds: TimeInterval, from old: MpvEngine, to new: MpvEngine) {
+        let steps = 8
+        var step = 0
+        let start = Timer(timeInterval: delay, repeats: false) { [weak self] _ in
+            let ramp = Timer(timeInterval: max(0.02, seconds / Double(steps)), repeats: true) { timer in
+                step += 1
+                let p = Double(step) / Double(steps)
+                new.setBass(-24 * (1 - p))
+                old.setBass(-24 * p)
+                if step >= steps { timer.invalidate() }
+            }
+            RunLoop.main.add(ramp, forMode: .common)
+            self?.mixTimers.append(ramp)
+        }
+        RunLoop.main.add(start, forMode: .common)
+        mixTimers.append(start)
+    }
+
+    /// Bends a song's tempo in small steps (pitch stays: mpv's scaletempo2).
+    private func rampSpeed(of e: MpvEngine, to target: Double, over seconds: Double) {
+        let from = e.double("speed") ?? 1
+        let began = Date()
+        let timer = Timer(timeInterval: 0.1, repeats: true) { timer in
+            let p = min(1, Date().timeIntervalSince(began) / seconds)
+            e.set("speed", String(format: "%.4f", from + (target - from) * p))
+            if p >= 1 { timer.invalidate() }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        mixTimers.append(timer)
     }
 
     // MARK: Session
@@ -426,7 +612,23 @@ enum SleepTimer: String, CaseIterable, Identifiable {
         }
     }
 
+    /// Once a song is playing, by a load or a pre-loaded mix: remember the session,
+    /// top up the radio, and get the next songs ready.
+    private func afterTrackStarted(video: Bool, height: Int) async {
+        saveSession()
+        extendWithRadioIfNeeded()
+        // The next two are songs you're about to hear, so they don't wait in line
+        // behind songs you hovered; the third goes in the background line.
+        await resolver.prepare(upNext.prefix(2).map(\.id), video: video, maxHeight: height)
+        await resolver.prefetch(upNext.dropFirst(2).prefix(1).map(\.id), video: video, maxHeight: height)
+    }
+
     private func load(at start: TimeInterval = 0, autoplay: Bool = true, followLive: Bool = false) {
+        cancelPrepared()
+        if !followLive {
+            mixTimers.forEach { $0.invalidate() }
+            mixTimers = []
+        }
         guard let song = current else {
             engine.stop()
             return
@@ -481,15 +683,11 @@ enum SleepTimer: String, CaseIterable, Identifiable {
                 self.awaitingFile = true
                 let begin = followLive ? self.livePosition + 0.2 : start
                 self.position = begin
+                if !followLive { self.engine.resetTransition() }
                 self.engine.load(audio: streams.audio, video: streams.video, start: begin, paused: !autoplay,
                                  gainDb: self.matchLoudness ? streams.gainDb : 0)
                 self.isLoading = false
-                self.saveSession()
-                self.extendWithRadioIfNeeded()
-                // The next two are songs you're about to hear, so they don't wait in line
-                // behind songs you hovered; the third goes in the background line.
-                await self.resolver.prepare(self.upNext.prefix(2).map(\.id), video: video, maxHeight: height)
-                await self.resolver.prefetch(self.upNext.dropFirst(2).prefix(1).map(\.id), video: video, maxHeight: height)
+                await self.afterTrackStarted(video: video, height: height)
             } catch {
                 guard token == self.loadToken else { return }
                 self.crossfading = false

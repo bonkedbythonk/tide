@@ -4,7 +4,9 @@ import Foundation
 // Smart crossfades: the end of the playing song and the start of the next are
 // listened to (beats and loudness) and the crossfade is planned from that: quiet
 // tails and intros are skipped, the fade lasts a number of beats, and both songs
-// meet on a beat. Classic beat tracking (onset envelope, autocorrelation tempo,
+// meet on a beat. When both beats are steady over the overlap and the tempos are
+// close, the plan is a beat-matched mix: the next song plays at the current one's
+// tempo for up to 64 beats, and the bass swaps halfway. Classic beat tracking (onset envelope, autocorrelation tempo,
 // dynamic-programming beats); a trained model can replace `BeatTracker` later.
 // Nothing here depends on the rest of the app, so it can be tested on its own.
 
@@ -20,6 +22,8 @@ struct BeatAnalysis: Codable {
     /// Loudness in dB, one value every `loudnessStep` seconds from `start`.
     var loudness: [Float]
     var loudnessStep: TimeInterval
+    /// Onset strength on the same steps, for timing a part of the stretch on its own.
+    var onset: [Float]
 }
 
 enum BeatTracker {
@@ -31,11 +35,14 @@ enum BeatTracker {
         guard samples.count > frame * 8 else { return nil }
         let fps = sampleRate / Double(hop)
         let (onset, loudness) = envelopes(samples)
-        let bpm = tempo(onset, fps: fps)
+        // Tracked in 80-160: at half time the beats are far apart and the tracker's
+        // picks wander tens of milliseconds, too loose to line two songs up.
+        let bpm = foldTempo(tempo(onset, fps: fps))
         let confidence = steadiness(onset, fps: fps, bpm: bpm)
         let beats = track(onset, fps: fps, bpm: bpm).map { start + Double($0) / fps }
         return BeatAnalysis(start: start, duration: Double(samples.count) / sampleRate, bpm: bpm,
-                            confidence: confidence, beats: beats, loudness: loudness, loudnessStep: 1 / fps)
+                            confidence: confidence, beats: beats, loudness: loudness, loudnessStep: 1 / fps,
+                            onset: onset)
     }
 
     /// Spectral flux of the log spectrum (how much new sound starts in each frame),
@@ -117,7 +124,7 @@ enum BeatTracker {
 
     /// Strongest repetition in the onsets between 60 and 200 BPM, leaning toward
     /// 120 like listeners do.
-    private static func tempo(_ env: [Float], fps: Double) -> Double {
+    static func tempo(_ env: [Float], fps: Double) -> Double {
         let minLag = Int(fps * 60 / 200), maxLag = Int(fps * 60 / 60)
         guard env.count > maxLag * 2 else { return 120 }
         var energy: Float = 0
@@ -179,6 +186,15 @@ enum BeatTracker {
     }
 }
 
+/// Half and double time are the same beat for mixing: tempos folded into 80-160.
+func foldTempo(_ bpm: Double) -> Double {
+    guard bpm > 0 else { return 0 }
+    var b = bpm
+    while b < 80 { b *= 2 }
+    while b >= 160 { b /= 2 }
+    return b
+}
+
 /// Where the next song comes in, in both songs' own time.
 struct TransitionPlan: Codable {
     /// The playing song's time at which the next one starts.
@@ -188,6 +204,13 @@ struct TransitionPlan: Codable {
     var fade: TimeInterval
     /// Both songs had a beat steady enough to line up.
     var onBeat: Bool
+    /// Beat-matched: the current song plays at 1 / `speed` during the overlap so its
+    /// beats land on the next one's, and the bass swaps halfway. `fade` and `beat`
+    /// are in the current song's own time.
+    var matched = false
+    var speed = 1.0
+    /// The current song's beat length (s), for timing the bass swap and the ease back.
+    var beat: TimeInterval = 0
 }
 
 enum TransitionPlanner {
@@ -197,6 +220,7 @@ enum TransitionPlanner {
     ///   - fallbackFade: the fade used when the beat isn't steady enough to count in.
     static func plan(tail: BeatAnalysis, length: TimeInterval, head: BeatAnalysis,
                      fallbackFade: TimeInterval) -> TransitionPlan {
+        if let mix = matchedPlan(tail: tail, length: length, head: head) { return mix }
         let steady = 0.9
         let onBeat = tail.confidence >= steady && head.confidence >= steady
         // Where the music really stops and starts: quieter than 20 dB under each
@@ -218,18 +242,77 @@ enum TransitionPlanner {
         return TransitionPlan(outAt: outAt, inAt: inAt, fade: fade, onBeat: onBeat)
     }
 
+    /// A beat-matched mix, or nil when the beats aren't steady enough over the
+    /// overlap or the tempos are too far apart (more than 6% after folding).
+    /// The overlap ends where the current song's music stops and counts back 64
+    /// (or 32, or 16) beats from there: a guess at a phrase, since bars aren't detected.
+    private static func matchedPlan(tail: BeatAnalysis, length: TimeInterval, head: BeatAnalysis) -> TransitionPlan? {
+        let endA = lastLoud(tail).map { min(length, $0 + 0.3) } ?? length
+        let startB = firstLoud(head).map { max(0, min($0 - 0.05, 15)) } ?? 0
+        guard let last = tail.beats.lastIndex(where: { $0 <= endA }),
+              let first = head.beats.firstIndex(where: { $0 >= startB - 0.05 }) else { return nil }
+        for count in [64, 32, 16] {
+            guard last - count >= 0, first + count < head.beats.count else { continue }
+            let a = Array(tail.beats[(last - count)...last])
+            let b = Array(head.beats[first...(first + count)])
+            guard let fitA = fit(a), let fitB = fit(b),
+                  // The tracker works in 23 ms steps, so even a drum machine wanders ~15 ms;
+                  // rubato piano wanders 50 ms and more.
+                  fitA.jitter < 0.04, fitB.jitter < 0.04,
+                  onHits(tail, a), onHits(head, b) else { continue }
+            let tempoA = foldTempo(60 / fitA.period), tempoB = foldTempo(60 / fitB.period)
+            let speed = tempoA / tempoB
+            guard abs(speed - 1) <= 0.06 else { return nil }
+            let fade = Double(count) * fitA.period
+            guard fade <= 32 else { continue }
+            return TransitionPlan(outAt: a[0], inAt: b[0], fade: fade, onBeat: true,
+                                  matched: true, speed: speed, beat: fitA.period)
+        }
+        return nil
+    }
+
+    /// The beat length from a straight line through the beat times, and how far the
+    /// beats wander from that line (s, root mean square).
+    static func fit(_ beats: [TimeInterval]) -> (period: TimeInterval, jitter: TimeInterval)? {
+        let n = Double(beats.count)
+        guard beats.count >= 8 else { return nil }
+        let meanI = (n - 1) / 2
+        let meanT = beats.reduce(0, +) / n
+        var num = 0.0, den = 0.0
+        for (i, t) in beats.enumerated() {
+            num += (Double(i) - meanI) * (t - meanT)
+            den += pow(Double(i) - meanI, 2)
+        }
+        let period = num / den
+        guard period > 0 else { return nil }
+        let rms = sqrt(beats.enumerated().map { i, t in pow(t - (meanT + (Double(i) - meanI) * period), 2) }.reduce(0, +) / n)
+        return (period, rms)
+    }
+
+    /// Most beats (60%) sit on a real hit. Where the music thins out, the tracker
+    /// still fills in evenly spaced beats; those land on nothing and don't count.
+    static func onHits(_ a: BeatAnalysis, _ beats: [TimeInterval]) -> Bool {
+        let fps = 1 / a.loudnessStep
+        let hits = beats.filter { t in
+            let i = Int(((t - a.start) * fps).rounded())
+            let near = max(0, i - 1)...min(a.onset.count - 1, i + 1)
+            return near.contains { a.onset[$0] > 0.25 }
+        }
+        return Double(hits.count) >= Double(beats.count) * 0.6
+    }
+
     private static func threshold(_ a: BeatAnalysis) -> Float? {
         guard !a.loudness.isEmpty else { return nil }
         let sorted = a.loudness.sorted()
         return sorted[Int(Double(sorted.count - 1) * 0.8)] - 20
     }
 
-    private static func lastLoud(_ a: BeatAnalysis) -> TimeInterval? {
+    static func lastLoud(_ a: BeatAnalysis) -> TimeInterval? {
         guard let floor = threshold(a), let i = a.loudness.lastIndex(where: { $0 > floor }) else { return nil }
         return a.start + Double(i) * a.loudnessStep
     }
 
-    private static func firstLoud(_ a: BeatAnalysis) -> TimeInterval? {
+    static func firstLoud(_ a: BeatAnalysis) -> TimeInterval? {
         guard let floor = threshold(a), let i = a.loudness.firstIndex(where: { $0 > floor }) else { return nil }
         return a.start + Double(i) * a.loudnessStep
     }
@@ -258,7 +341,7 @@ enum AudioClip {
                 do { try process.run() } catch { return continuation.resume(returning: nil) }
                 // A stalled download shouldn't hold the analysis forever.
                 let deadline = DispatchWorkItem { if process.isRunning { process.terminate() } }
-                DispatchQueue.global().asyncAfter(deadline: .now() + 25, execute: deadline)
+                DispatchQueue.global().asyncAfter(deadline: .now() + 45, execute: deadline)
                 let data = out.fileHandleForReading.readDataToEndOfFile()
                 process.waitUntilExit()
                 deadline.cancel()

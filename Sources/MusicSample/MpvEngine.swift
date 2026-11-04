@@ -78,6 +78,12 @@ final class MpvEngine {
     private var pictureWidth = 0
     private var pictureHeight = 0
     private var nudgeRestore: DispatchWorkItem?
+    /// The low-end EQ smart transitions swap the bass with: nil until the first file
+    /// has loaded, then whether mpv accepted it.
+    private(set) var hasBassFilter: Bool?
+    /// Two bands (about 30-240 Hz) that together act as a bass shelf; the build's
+    /// ffmpeg has no shelf filter. They sit at 0 dB until a transition moves them.
+    private static let bassFilter = "@bass:lavfi=[equalizer=f=60:t=o:w=2:g=0,equalizer=f=120:t=o:w=1.5:g=0]"
 
     init() {
         guard let handle = mpv_create() else { return }
@@ -145,6 +151,31 @@ final class MpvEngine {
     }
 
     func stop() { command(["stop"]) }
+
+    /// Adds the bass EQ once a file plays. Not at start-up: a filter mpv can't build
+    /// there would leave every song silent; here mpv just refuses it.
+    func installBassFilter() {
+        guard hasBassFilter == nil else { return }
+        hasBassFilter = trySet("af", Self.bassFilter)
+    }
+
+    /// Low end in dB: 0 is as mastered, -24 all but removes the bass.
+    func setBass(_ db: Double) {
+        guard hasBassFilter == true else { return }
+        command(["af-command", "bass", "g", String(format: "%.1f", db), "equalizer"])
+    }
+
+    /// What a transition changed back to normal: speed and bass.
+    func resetTransition() {
+        set("speed", "1")
+        setBass(0)
+    }
+
+    func double(_ property: String) -> Double? {
+        guard let mpv else { return nil }
+        var value = 0.0
+        return mpv_get_property(mpv, property, MPV_FORMAT_DOUBLE, &value) >= 0 ? value : nil
+    }
 
     /// Puts a video picture on the track that's already playing; the audio carries on.
     func addVideo(_ url: URL) {
@@ -229,7 +260,10 @@ final class MpvEngine {
                     }
                 }
             case MPV_EVENT_FILE_LOADED:
-                DispatchQueue.main.async { [weak self] in self?.onFileLoaded?() }
+                DispatchQueue.main.async { [weak self] in
+                    self?.installBassFilter()
+                    self?.onFileLoaded?()
+                }
             case MPV_EVENT_END_FILE:
                 guard let end = event.data?.assumingMemoryBound(to: mpv_event_end_file.self).pointee else { continue }
                 if end.reason == MPV_END_FILE_REASON_EOF {

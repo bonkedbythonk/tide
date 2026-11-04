@@ -1,12 +1,12 @@
 import Foundation
 import os
 
-/// Fetches and caches the analyses smart transitions plan from: the last 40 s of
-/// the playing song and the first 40 s of the next, each listened to once and kept
+/// Fetches and caches the analyses smart transitions plan from: the last 75 s of
+/// the playing song and the first 75 s of the next, each listened to once and kept
 /// on disk by video id.
 enum TransitionStore {
     static let log = Logger(subsystem: "local.music-sample", category: "transitions")
-    private static let clip: TimeInterval = 40
+    private static let clip: TimeInterval = 75
 
     /// - Parameter audioURL: the song's audio link and when it starts answering.
     static func plan(from a: String, length: TimeInterval, to b: String, fallbackFade: TimeInterval,
@@ -19,7 +19,7 @@ enum TransitionStore {
 
     private static func analysis(_ id: String, tail: Bool, length: TimeInterval,
                                  audioURL: (String) async -> (URL, Date)?) async -> BeatAnalysis? {
-        let name = "beats-\(id)-\(tail ? "tail" : "head")"
+        let name = "beats75-\(id)-\(tail ? "tail" : "head")"
         if let cached = DiskCache.load(BeatAnalysis.self, name) { return cached }
         guard AudioClip.ffmpeg != nil, let (url, availableAt) = await audioURL(id) else { return nil }
         let wait = availableAt.timeIntervalSinceNow

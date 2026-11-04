@@ -37,6 +37,13 @@ final class MpvMetalView: NSView {
         syncDrawableSize()
     }
 
+    // Moving between fullscreen, Now Playing and the mini player resizes the view
+    // without a layout pass; without this mpv kept drawing at the old size.
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        syncDrawableSize()
+    }
+
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         syncDrawableSize()

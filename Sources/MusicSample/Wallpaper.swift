@@ -359,6 +359,8 @@ extension EnvironmentValues {
     }
     /// The colour for active controls: from the playing song's cover, or the system accent.
     @Entry var barAccent: Color = .accentColor
+    /// The light a song mixing in gives off: its cover colour, or white for grey covers.
+    @Entry var mixGlow: Color = .white
     /// Its deeper form, for filled buttons with white text.
     @Entry var accentFill: Color = .accentColor
 }

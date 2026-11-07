@@ -98,8 +98,10 @@ final class ScrollActivity {
     @ObservationIgnored private var settle: DispatchWorkItem?
 
     private init() {
-        ScrollEventTap.shared.subscribe { [weak self] _ in
-            guard let self else { return }
+        ScrollEventTap.shared.subscribe { [weak self] event in
+            // Fingers resting on the trackpad (a two-finger tap for a right-click among
+            // them) send scroll events that don't move; those aren't scrolling.
+            guard let self, event.scrollingDeltaX != 0 || event.scrollingDeltaY != 0 else { return }
             if !isScrolling { isScrolling = true }
             settle?.cancel()
             let item = DispatchWorkItem { [weak self] in self?.isScrolling = false }

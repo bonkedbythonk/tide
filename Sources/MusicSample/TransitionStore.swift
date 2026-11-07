@@ -19,14 +19,17 @@ enum TransitionStore {
 
     private static func analysis(_ id: String, tail: Bool, length: TimeInterval,
                                  audioURL: (String) async -> (URL, Date)?) async -> BeatAnalysis? {
-        let name = "beats75-\(id)-\(tail ? "tail" : "head")"
+        let name = "beats75c-\(id)-\(tail ? "tail" : "head")"
         if let cached = DiskCache.load(BeatAnalysis.self, name) { return cached }
         guard AudioClip.ffmpeg != nil, let (url, availableAt) = await audioURL(id) else { return nil }
         let wait = availableAt.timeIntervalSinceNow
         if wait > 0 { try? await Task.sleep(for: .seconds(wait + 0.2)) }
         let start = tail ? max(0, length - clip) : 0
         guard let samples = await AudioClip.decode(url, from: start, seconds: clip),
-              let result = BeatTracker.analyze(samples, start: start) else { return nil }
+              var result = BeatTracker.analyze(samples, start: start) else { return nil }
+        // Only the outgoing song's voice matters: the mix waits for it to finish.
+        if tail { result.voiceEnd = VoiceDetector.lastVoice(samples, sampleRate: BeatTracker.sampleRate, start: start) }
+        if tail { log.info("\(id, privacy: .public): voice ends at \(result.voiceEnd ?? -1, format: .fixed(precision: 1))") }
         DiskCache.save(result, name)
         return result
     }

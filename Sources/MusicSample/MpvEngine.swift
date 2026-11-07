@@ -81,9 +81,11 @@ final class MpvEngine {
     /// The low-end EQ smart transitions swap the bass with: nil until the first file
     /// has loaded, then whether mpv accepted it.
     private(set) var hasBassFilter: Bool?
-    /// Two bands (about 30-240 Hz) that together act as a bass shelf; the build's
-    /// ffmpeg has no shelf filter. They sit at 0 dB until a transition moves them.
-    private static let bassFilter = "@bass:lavfi=[equalizer=f=60:t=o:w=2:g=0,equalizer=f=120:t=o:w=1.5:g=0]"
+    /// Bands that act as shelves (the build's ffmpeg has no shelf or pass filters):
+    /// three for the bass (about 30-220 Hz), three for the highs (about 2-16 kHz). They
+    /// sit at 0 dB until a transition moves them.
+    private static let bassFilter = "@bass:lavfi=[equalizer=f=50:t=o:w=2:g=0,equalizer=f=100:t=o:w=1.8:g=0,equalizer=f=180:t=o:w=1.5:g=0],"
+        + "@highs:lavfi=[equalizer=f=7000:t=o:w=1.5:g=0,equalizer=f=11000:t=o:w=1.5:g=0,equalizer=f=15000:t=o:w=1.5:g=0]"
 
     init() {
         guard let handle = mpv_create() else { return }
@@ -157,6 +159,18 @@ final class MpvEngine {
     func installBassFilter() {
         guard hasBassFilter == nil else { return }
         hasBassFilter = trySet("af", Self.bassFilter)
+        if hasBassFilter == true, !preset.isEmpty { applyPreset() }
+    }
+
+    /// The listener's EQ preset (ffmpeg filters), after the transition bands. Changing
+    /// it rebuilds the chain, which also puts those bands back at 0 dB.
+    var preset = "" {
+        didSet { if preset != oldValue, hasBassFilter == true { applyPreset() } }
+    }
+
+    private func applyPreset() {
+        let chain = preset.isEmpty ? Self.bassFilter : Self.bassFilter + ",@eq:lavfi=[\(preset)]"
+        if !trySet("af", chain) { _ = trySet("af", Self.bassFilter) }
     }
 
     /// Low end in dB: 0 is as mastered, -24 all but removes the bass.
@@ -165,10 +179,17 @@ final class MpvEngine {
         command(["af-command", "bass", "g", String(format: "%.1f", db), "equalizer"])
     }
 
-    /// What a transition changed back to normal: speed and bass.
+    /// High end in dB, for a transition's filter sweep: 0 as mastered, -18 muffled.
+    func setHighs(_ db: Double) {
+        guard hasBassFilter == true else { return }
+        command(["af-command", "highs", "g", String(format: "%.1f", db), "equalizer"])
+    }
+
+    /// What a transition changed back to normal: speed, bass and highs.
     func resetTransition() {
         set("speed", "1")
         setBass(0)
+        setHighs(0)
     }
 
     func double(_ property: String) -> Double? {

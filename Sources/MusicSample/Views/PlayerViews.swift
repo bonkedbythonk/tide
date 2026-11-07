@@ -47,8 +47,18 @@ struct NowPlayingInfo: View {
     var body: some View {
         HStack(spacing: 12) {
             if let s = player.current {
+                // During a smart transition the old song stays put while the new one's
+                // cover comes in over it and the titles cross over.
+                let mix = player.mix
+                let shown = mix?.from ?? s
                 HStack(spacing: 12) {
-                    Artwork(hue: s.hue, url: s.artwork, side: 52, radius: 6)
+                    Group {
+                        if let mix {
+                            MixCover(mix: mix, to: s).id(mix.began)
+                        } else {
+                            Artwork(hue: s.hue, url: s.artwork, side: 52, radius: 6)
+                        }
+                    }
                         .overlay(alignment: .topTrailing) {
                             Image(systemName: router.showNowPlaying ? "chevron.down" : "chevron.up")
                                 .font(.system(size: 9, weight: .bold))
@@ -58,18 +68,22 @@ struct NowPlayingInfo: View {
                                 .padding(3)
                                 .contentTransition(.symbolEffect(.replace))
                         }
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(s.title).font(.headline).lineLimit(1)
-                        if let error = player.lastError {
-                            Text(error).font(.caption).foregroundStyle(.red).lineLimit(1).help(error)
-                        } else if player.isLoading {
-                            Text("Loading…").font(.subheadline).foregroundStyle(.secondary)
-                        } else {
-                            ArtistLink(song: s).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+                    if let mix {
+                        MixTitles(mix: mix, to: s).id(mix.began)
+                    } else {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(s.title).font(.headline).lineLimit(1)
+                            if let error = player.lastError {
+                                Text(error).font(.caption).foregroundStyle(.red).lineLimit(1).help(error)
+                            } else if player.isLoading {
+                                Text("Loading…").font(.subheadline).foregroundStyle(.secondary)
+                            } else {
+                                ArtistLink(song: s).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+                            }
                         }
                     }
                 }
-                .id(s.id)
+                .id(shown.id)
                 .transition(.push(from: player.skipForward ? .trailing : .leading))
                 .contextMenu { SongMenu(songs: [s]) }
                 Spacer(minLength: 4)
@@ -88,8 +102,59 @@ struct NowPlayingInfo: View {
     }
 }
 
+/// Depth dissolve for a mix: the old cover eases back and softens while the new one
+/// settles forward into focus, kept inside the cover's frame.
+private struct MixCover: View {
+    let mix: Player.Mix
+    let to: Song
+    @State private var on = false
+
+    var body: some View {
+        ZStack {
+            Artwork(hue: mix.from.hue, url: mix.from.artwork, side: 52, radius: 6)
+                .scaleEffect(on ? 1.08 : 1).blur(radius: on ? 3 : 0).opacity(on ? 0 : 1)
+            Artwork(hue: to.hue, url: to.artwork, side: 52, radius: 6)
+                .scaleEffect(on ? 1 : 1.08).blur(radius: on ? 0 : 3).opacity(on ? 1 : 0)
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .onAppear {
+            let left = max(0.3, mix.seconds - Date().timeIntervalSince(mix.began))
+            withAnimation(.easeInOut(duration: left)) { on = true }
+        }
+    }
+}
+
+/// One title at a time during a mix: the old one lifts away and blurs out, then the
+/// new one rises into place.
+private struct MixTitles: View {
+    let mix: Player.Mix
+    let to: Song
+    @State private var out = false
+    @State private var into = false
+
+    var body: some View {
+        ZStack(alignment: .leading) {
+            title(mix.from).opacity(out ? 0 : 1).offset(y: out ? -6 : 0).blur(radius: out ? 4 : 0)
+            title(to).opacity(into ? 1 : 0).offset(y: into ? 0 : 6).blur(radius: into ? 0 : 4)
+        }
+        .onAppear {
+            let s = mix.seconds
+            withAnimation(.easeInOut(duration: 0.45 * s)) { out = true }
+            withAnimation(.easeInOut(duration: 0.5 * s).delay(0.5 * s)) { into = true }
+        }
+    }
+
+    private func title(_ song: Song) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(song.title).font(.headline).lineLimit(1)
+            Text(song.artist).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+        }
+    }
+}
+
 struct TransportControls: View {
     @Environment(\.barAccent) private var accent
+    @Environment(\.mixGlow) private var glow
     @Environment(Player.self) private var player
 
     var body: some View {
@@ -120,18 +185,101 @@ struct TransportControls: View {
             .buttonStyle(.plain)
             HStack(spacing: 8) {
                 Text(known ? formatTime(shown) : "–:––").frame(width: 40, alignment: .trailing)
-                Slider(
-                    value: Binding(get: { known ? min(shown, duration) : 0 }, set: { player.seek($0) }),
-                    in: 0...duration
-                )
-                .controlSize(.mini)
-                .disabled(!known)
+                TimelineView(.animation(paused: !player.isPlaying && player.mix == nil)) { context in
+                    let now = player.scrubPosition ?? player.position(at: context.date)
+                    CometBar(value: known ? min(now, duration) : 0, duration: duration,
+                             glow: glow, intensity: player.mix?.swell(at: context.date) ?? 0,
+                             mixAt: player.upcomingMix.map { $0 / duration },
+                             enabled: known, seek: player.seek)
+                }
                 Text(known ? formatTime(duration) : "–:––").frame(width: 40, alignment: .leading)
             }
             .font(.caption)
             .monospacedDigit()
             .foregroundStyle(.secondary)
         }
+    }
+}
+
+/// The progress bar: a thin track with a white head. A small mark shows where the
+/// next song will mix in; during the mix the head glows and trails light in the new
+/// song's colour. Click or drag anywhere on it to seek; the seek happens on release.
+struct CometBar: View {
+    let value: TimeInterval
+    let duration: TimeInterval
+    let glow: Color
+    /// How brightly it glows, 0 outside a mix.
+    let intensity: Double
+    /// Where the next song mixes in, as a fraction of the song.
+    let mixAt: Double?
+    let enabled: Bool
+    let seek: (TimeInterval) -> Void
+    @State private var dragging: Double?
+    @State private var hovering = false
+
+    var body: some View {
+        GeometryReader { geo in
+            let width = max(1, geo.size.width)
+            let fraction = dragging ?? min(1, max(0, value / max(duration, 1)))
+            let x = width * fraction
+            let big = hovering || dragging != nil
+            let color = glow
+            let on = intensity
+            // Drawn rather than laid out: views snap to whole pixels, which makes a slow
+            // bar tick; a canvas draws it at the exact fraction.
+            // The canvas reaches past the bar so the head and glow aren't cut off at the ends.
+            Canvas { ctx, size in
+                ctx.translateBy(x: 24, y: 0)
+                let mid = size.height / 2
+                func pill(_ from: CGFloat, _ to: CGFloat, _ height: CGFloat) -> Path {
+                    Path(roundedRect: CGRect(x: from, y: mid - height / 2, width: max(0, to - from), height: height),
+                         cornerRadius: height / 2)
+                }
+                let h = 3 + 2 * on
+                ctx.fill(pill(0, width, h), with: .color(.white.opacity(0.18)))
+                ctx.fill(pill(0, x, h), with: .color(.white.opacity(0.55)))
+                if let mixAt {
+                    let m = width * min(1, max(0, mixAt))
+                    ctx.drawLayer { l in
+                        l.addFilter(.shadow(color: glow.opacity(0.8), radius: 3))
+                        l.fill(pill(m - 1, m + 1, 8), with: .color(glow))
+                    }
+                }
+                if on > 0 {
+                    ctx.drawLayer { l in
+                        l.opacity = on
+                        l.addFilter(.shadow(color: color, radius: 6))
+                        l.addFilter(.shadow(color: color.opacity(0.7), radius: 14))
+                        l.fill(pill(x - min(140, x), x, 5), with: .linearGradient(
+                            Gradient(colors: [color.opacity(0), color.opacity(0.95)]),
+                            startPoint: CGPoint(x: x - min(140, x), y: mid), endPoint: CGPoint(x: x, y: mid)))
+                    }
+                }
+                let d = (big ? 11 : 9) + 3 * on
+                ctx.drawLayer { l in
+                    if on > 0 {
+                        l.addFilter(.shadow(color: color.opacity(on), radius: 6))
+                        l.addFilter(.shadow(color: color.opacity(0.8 * on), radius: 16))
+                    }
+                    l.fill(Path(ellipseIn: CGRect(x: x - d / 2, y: mid - d / 2, width: d, height: d)), with: .color(.white))
+                }
+            }
+            .padding(-24)
+            .help(mixAt == nil ? "" : "The next song mixes in at the mark")
+            .frame(height: geo.size.height)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { g in if enabled { dragging = min(1, max(0, g.location.x / width)) } }
+                    .onEnded { _ in
+                        if let d = dragging { seek(d * duration) }
+                        dragging = nil
+                    }
+            )
+            .onHover { hovering = $0 }
+        }
+        .frame(height: 16)
+        .opacity(enabled ? 1 : 0.5)
     }
 }
 
@@ -229,11 +377,15 @@ struct SoundPopover: View {
                         .monospacedDigit().frame(width: 34, alignment: .trailing)
                 }
             }
+            .disabled(player.smartTransitions)
+            .help(player.smartTransitions ? "Smart transitions choose the crossfade" : "")
             Toggle("Smart transitions", isOn: $player.smartTransitions)
                 .help("Crossfade on the beat and skip quiet endings and intros (needs ffmpeg). Off for videos.")
             Toggle("Autoplay similar songs", isOn: $player.autoplay)
                 .help("When the queue runs out, keep going with YouTube Music's radio for the last song")
             Toggle("Gapless playback", isOn: $player.gapless)
+                .disabled(player.smartTransitions || player.crossfade > 0)
+                .help("Start the next song the moment this one ends (when there's no crossfade)")
             Toggle("Match YouTube Music loudness", isOn: $player.matchLoudness)
             Toggle("Smooth transitions", isOn: $player.smoothTransitions)
                 .help("Fade the volume on pause, resume and skip")
@@ -243,8 +395,6 @@ struct SoundPopover: View {
             Picker("Sleep timer", selection: $player.sleepTimer) {
                 ForEach(SleepTimer.allCases) { Text($0.rawValue).tag($0) }
             }
-            Text("Gapless, EQ and sleep timer aren't wired up yet.")
-                .font(.caption).foregroundStyle(.secondary)
         }
         .formStyle(.grouped)
         .frame(width: 360, height: 360)

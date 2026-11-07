@@ -22,6 +22,8 @@ struct SettingsPage: View {
                                 .monospacedDigit().frame(width: 34, alignment: .trailing)
                         }
                     }
+                    .disabled(player.smartTransitions)
+                    .help(player.smartTransitions ? "Smart transitions choose the crossfade" : "")
                     Toggle("Autoplay similar songs", isOn: $player.autoplay)
                     Toggle("Smooth transitions", isOn: $player.smoothTransitions)
                     Toggle("Match YouTube Music loudness", isOn: $player.matchLoudness)

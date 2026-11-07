@@ -178,6 +178,7 @@ struct RootView: View {
         }
         // Active buttons, sliders and the Play buttons take the playing song's cover colour.
         .environment(\.barAccent, wallpaper.coverAccent ?? .accentColor)
+        .environment(\.mixGlow, wallpaper.coverAccent ?? .white)
         .environment(\.accentFill, wallpaper.coverFill ?? .accentColor)
         .tint(wallpaper.coverAccent ?? .accentColor)
         // Over a wallpaper the whole window is dark, the system-drawn dividers included.

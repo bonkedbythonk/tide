@@ -961,6 +961,7 @@ struct SongInfoView: View {
             }
             HStack {
                 Button { library.copyLink(song.id, song: true) } label: { Label("Copy Link", systemImage: "link") }
+                Button("Copy Spotify Link") { library.copySpotifyLink(song) }
                 Spacer()
                 Button("Done") { router.infoSong = nil }.keyboardShortcut(.defaultAction)
             }

@@ -460,6 +460,15 @@ import SwiftUI
         showToast("Link copied")
     }
 
+    /// A Spotify search for the song, copied for friends on Spotify. An exact track
+    /// link would need a Spotify API key; the search puts the song at the top.
+    func copySpotifyLink(_ song: Song) {
+        let query = "\(song.title) \(song.artist)".addingPercentEncoding(withAllowedCharacters: .urlPathAllowed.subtracting(["/"])) ?? ""
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString("https://open.spotify.com/search/\(query)", forType: .string)
+        showToast("Spotify link copied")
+    }
+
     /// Writes a changed page to disk, so the next launch doesn't show the old version.
     @MainActor
     private func keep(_ pageID: String) {

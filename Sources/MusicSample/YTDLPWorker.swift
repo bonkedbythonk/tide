@@ -164,7 +164,9 @@ def handle(request):
 
 
 def main():
-    pool = ThreadPoolExecutor(max_workers=3)
+    # Room for a click on top of the next songs being prepared and hover prefetches,
+    # so the song you picked never waits for a slot behind them.
+    pool = ThreadPoolExecutor(max_workers=6)
     answer({"id": 0, "ok": True, "ready": True})
     for line in sys.stdin:
         line = line.strip()

@@ -72,7 +72,7 @@ struct NowPlayingInfo: View {
                         MixTitles(mix: mix, to: s).id(mix.began)
                     } else {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(s.title).font(.headline).lineLimit(1)
+                            MarqueeText(text: s.title).font(.headline)
                             if let error = player.lastError {
                                 Text(error).font(.caption).foregroundStyle(.red).lineLimit(1).help(error)
                             } else if player.isLoading {
@@ -99,6 +99,41 @@ struct NowPlayingInfo: View {
         .animation(.snappy(duration: 0.28), value: player.current?.id)
         .contentShape(Rectangle())
         .onHover { router.pointerOverPlayerSong = $0 }
+    }
+}
+
+/// One line of text that, when it doesn't fit, slides over to show the rest, rests,
+/// and slides back.
+struct MarqueeText: View {
+    let text: String
+    @State private var width: CGFloat = 0
+    @State private var full: CGFloat = 0
+    @State private var slid = false
+
+    var body: some View {
+        let overflow = max(0, full - width)
+        Text(text).lineLimit(1).hidden()
+            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
+            .overlay(alignment: .leading) {
+                Text(text).lineLimit(1).fixedSize()
+                    .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { full = $0 }
+                    .offset(x: slid ? -overflow : 0)
+            }
+            .clipped()
+            .task(id: "\(text)\(overflow)") {
+                slid = false
+                guard overflow > 1 else { return }
+                let seconds = Double(overflow) / 30
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: .seconds(2.5))
+                    guard !Task.isCancelled else { return }
+                    withAnimation(.linear(duration: seconds)) { slid = true }
+                    try? await Task.sleep(for: .seconds(seconds + 2.5))
+                    guard !Task.isCancelled else { return }
+                    withAnimation(.linear(duration: seconds)) { slid = false }
+                    try? await Task.sleep(for: .seconds(seconds))
+                }
+            }
     }
 }
 
@@ -146,7 +181,7 @@ private struct MixTitles: View {
 
     private func title(_ song: Song) -> some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(song.title).font(.headline).lineLimit(1)
+            MarqueeText(text: song.title).font(.headline)
             Text(song.artist).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
         }
     }
@@ -411,6 +446,7 @@ struct SidePanelView: View {
             Picker("", selection: $router.panelTab) {
                 Text("Up Next").tag(PanelTab.queue)
                 Text("Lyrics").tag(PanelTab.lyrics)
+                Text("Comments").tag(PanelTab.comments)
             }
             .pickerStyle(.segmented)
             .labelsHidden()
@@ -418,6 +454,7 @@ struct SidePanelView: View {
             switch router.panelTab {
             case .queue: QueueView()
             case .lyrics: LyricsView(fontSize: 20)
+            case .comments: CommentsView()
             }
         }
         // Over a wallpaper: inside the main panel, the window's wallpaper a touch darker.
@@ -743,7 +780,7 @@ struct NowPlayingView: View {
                         PillSwitch(options: [("Song", false), ("Video", true)],
                                    selection: Binding(get: { player.videoMode }, set: { player.videoMode = $0 }))
                         VStack(spacing: 4) {
-                            Text(s.title).font(.title.bold()).lineLimit(1)
+                            MarqueeText(text: s.title).font(.title.bold())
                             HStack(spacing: 0) {
                                 ArtistLink(song: s)
                                 if !s.album.isEmpty {
@@ -771,12 +808,13 @@ struct NowPlayingView: View {
 
                     if router.nowPlayingPanel {
                     VStack(spacing: 8) {
-                        PillSwitch(options: [("Lyrics", PanelTab.lyrics), ("Up Next", PanelTab.queue)],
+                        PillSwitch(options: [("Lyrics", PanelTab.lyrics), ("Up Next", PanelTab.queue), ("Comments", PanelTab.comments)],
                                    selection: $router.panelTab)
                         Group {
                             switch router.panelTab {
                             case .lyrics: LyricsView(fontSize: 28)
                             case .queue: NowPlayingQueue()
+                            case .comments: CommentsView()
                             }
                         }
                         .transition(.opacity.combined(with: .offset(y: 8)))
@@ -840,7 +878,7 @@ struct NowPlayingView: View {
                 if !has, router.panelTab == .lyrics {
                     router.panelTab = .queue
                     leftLyricsForMissing = true
-                } else if has, leftLyricsForMissing {
+                } else if has, leftLyricsForMissing, router.panelTab == .queue {
                     router.panelTab = .lyrics
                     leftLyricsForMissing = false
                 }

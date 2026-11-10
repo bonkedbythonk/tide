@@ -104,7 +104,7 @@ enum Route: Hashable {
 }
 
 enum PanelTab: Hashable {
-    case queue, lyrics
+    case queue, lyrics, comments
 }
 
 /// The extra details YouTube's player knows about a track (Song Info).

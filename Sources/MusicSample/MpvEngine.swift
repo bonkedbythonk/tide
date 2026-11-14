@@ -87,6 +87,17 @@ final class MpvEngine {
     private static let bassFilter = "@bass:lavfi=[equalizer=f=50:t=o:w=2:g=0,equalizer=f=100:t=o:w=1.8:g=0,equalizer=f=180:t=o:w=1.5:g=0],"
         + "@highs:lavfi=[equalizer=f=7000:t=o:w=1.5:g=0,equalizer=f=11000:t=o:w=1.5:g=0,equalizer=f=15000:t=o:w=1.5:g=0]"
 
+    /// Last in the chain: EBU R128 loudness measured on what plays, passed through
+    /// unchanged. Its momentary reading is read back from the filter's metadata.
+    private static let levelFilter = "@lvl:lavfi=[ebur128=metadata=1]"
+    private var hasLevelFilter = true
+
+    /// Momentary loudness in LUFS (about -70 quiet, -10 loud), nil without the filter.
+    func loudness() -> Double? {
+        guard hasBassFilter == true, hasLevelFilter, let text = getString("af-metadata/lvl/lavfi.r128.M") else { return nil }
+        return Double(text)
+    }
+
     init() {
         guard let handle = mpv_create() else { return }
         var wid = Int64(Int(bitPattern: Unmanaged.passUnretained(videoView.metalLayer).toOpaque()))
@@ -158,7 +169,12 @@ final class MpvEngine {
     /// there would leave every song silent; here mpv just refuses it.
     func installBassFilter() {
         guard hasBassFilter == nil else { return }
-        hasBassFilter = trySet("af", Self.bassFilter)
+        hasBassFilter = trySet("af", Self.bassFilter + "," + Self.levelFilter)
+        if hasBassFilter != true {
+            // A build without ebur128 still gets the EQ, just no levels.
+            hasLevelFilter = false
+            hasBassFilter = trySet("af", Self.bassFilter)
+        }
         if hasBassFilter == true, !preset.isEmpty { applyPreset() }
     }
 
@@ -170,7 +186,8 @@ final class MpvEngine {
 
     private func applyPreset() {
         let chain = preset.isEmpty ? Self.bassFilter : Self.bassFilter + ",@eq:lavfi=[\(preset)]"
-        if !trySet("af", chain) { _ = trySet("af", Self.bassFilter) }
+        let levels = hasLevelFilter ? "," + Self.levelFilter : ""
+        if !trySet("af", chain + levels) { _ = trySet("af", Self.bassFilter + levels) }
     }
 
     /// Low end in dB: 0 is as mastered, -24 all but removes the bass.

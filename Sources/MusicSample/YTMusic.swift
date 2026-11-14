@@ -107,18 +107,22 @@ final class YTClient {
         payload["context"] = ["client": ["clientName": "WEB_REMIX", "clientVersion": clientVersion, "hl": "en"]]
         req.httpBody = try JSONSerialization.data(withJSONObject: payload)
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.setValue(Self.origin, forHTTPHeaderField: "Origin")
-        req.setValue(Self.origin, forHTTPHeaderField: "X-Origin")
-        req.setValue(Self.userAgent, forHTTPHeaderField: "User-Agent")
-        req.setValue(cookieHeader, forHTTPHeaderField: "Cookie")
-        req.setValue(authorization, forHTTPHeaderField: "Authorization")
-        req.setValue("0", forHTTPHeaderField: "X-Goog-AuthUser")
+        sign(&req)
         req.setValue("67", forHTTPHeaderField: "X-YouTube-Client-Name")
         req.setValue(clientVersion, forHTTPHeaderField: "X-YouTube-Client-Version")
         let (data, response) = try await session.data(for: req)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard status == 200 else { throw YTError.http(status) }
         return try JSONSerialization.jsonObject(with: data) as? JSON ?? [:]
+    }
+
+    private func sign(_ req: inout URLRequest) {
+        req.setValue(Self.origin, forHTTPHeaderField: "Origin")
+        req.setValue(Self.origin, forHTTPHeaderField: "X-Origin")
+        req.setValue(Self.userAgent, forHTTPHeaderField: "User-Agent")
+        req.setValue(cookieHeader, forHTTPHeaderField: "Cookie")
+        req.setValue(authorization, forHTTPHeaderField: "Authorization")
+        req.setValue("0", forHTTPHeaderField: "X-Goog-AuthUser")
     }
 
     func browse(_ id: String) async throws -> JSON { try await call("browse", ["browseId": id]) }
@@ -130,6 +134,37 @@ final class YTClient {
         let json = try await call("browse/edit_playlist", ["playlistId": playlistID, "actions": actions])
         guard (json["status"] as? String)?.contains("SUCCEEDED") == true else { throw YTError.refused }
         return json["playlistEditResults"] as? [JSON] ?? []
+    }
+
+    /// Makes `jpeg` the playlist's cover, as the website's Edit Thumbnail does: a
+    /// resumable upload, then an edit naming the uploaded image.
+    func setPlaylistCover(_ playlistID: String, jpeg: Data) async throws {
+        guard !sapisid.isEmpty else { throw YTError.signedOut }
+        var start = URLRequest(url: URL(string: "\(Self.origin)/playlist_image_upload/playlist_custom_thumbnail")!)
+        start.httpMethod = "POST"
+        sign(&start)
+        start.setValue("resumable", forHTTPHeaderField: "X-Goog-Upload-Protocol")
+        start.setValue("start", forHTTPHeaderField: "X-Goog-Upload-Command")
+        start.setValue(String(jpeg.count), forHTTPHeaderField: "X-Goog-Upload-Header-Content-Length")
+        let (_, started) = try await session.data(for: start)
+        guard let started = started as? HTTPURLResponse, started.statusCode == 200,
+              let next = started.value(forHTTPHeaderField: "X-Goog-Upload-URL").flatMap(URL.init) else {
+            throw YTError.http((started as? HTTPURLResponse)?.statusCode ?? 0)
+        }
+        var upload = URLRequest(url: next)
+        upload.httpMethod = "POST"
+        sign(&upload)
+        upload.setValue("upload, finalize", forHTTPHeaderField: "X-Goog-Upload-Command")
+        upload.setValue("0", forHTTPHeaderField: "X-Goog-Upload-Offset")
+        let (data, response) = try await session.upload(for: upload, from: jpeg)
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard status == 200 else { throw YTError.http(status) }
+        guard let blob = (try JSONSerialization.jsonObject(with: data) as? JSON)?["encryptedBlobId"] as? String
+        else { throw YTError.refused }
+        try await editPlaylist(playlistID, [["action": "ACTION_SET_CUSTOM_THUMBNAIL", "addedCustomThumbnail": [
+            "imageKey": ["type": "PLAYLIST_IMAGE_TYPE_CUSTOM_THUMBNAIL", "name": "studio_square_thumbnail"],
+            "playlistScottyEncryptedBlobId": blob,
+        ]]])
     }
 
     /// A new private playlist; returns its id (without "VL").
@@ -486,6 +521,7 @@ enum YTParse {
         var data = PageData(id: id, title: title, subtitle: subtitle, artwork: art, songs: list)
         data.suggestions = suggestionShelf.map(songs)
         data.owned = first("playlistEditorEndpoint", in: json) != nil
+        data.description = text(first("description", in: header["description"]))
         // The header's bookmark button saves an album or someone else's playlist.
         if let save = findAll("toggleButtonRenderer", in: header).first(where: {
             dig($0, "defaultServiceEndpoint", "likeEndpoint", "target", "playlistId") != nil

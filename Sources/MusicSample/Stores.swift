@@ -299,7 +299,7 @@ enum SleepTimer: String, CaseIterable, Identifiable {
                 self.prepared?.ready = true
                 // It comes in thin (no lows, soft highs) and opens up during the mix when beat-matched.
                 if self.transition?.plan.matched == true {
-                    e.setBass(-24)
+                    e.setBass(self.transition?.plan.swapsBass == false ? 0 : -24)
                     e.setHighs(-12)
                 } else {
                     e.setBass(0)
@@ -429,8 +429,12 @@ enum SleepTimer: String, CaseIterable, Identifiable {
             if p.key == transitionKey, let plan, t < plan.outAt + 0.5 { return }
             cancelPrepared()
         }
-        // With smart transitions on, the Crossfade setting is unused.
-        let seconds = plan?.fade ?? (smartTransitions ? 5 : crossfade)
+        // With smart transitions on, the Crossfade setting is unused. A plan that gets
+        // here missed its beat (late, or the next song wasn't ready), so the two won't
+        // line up: a short plain fade instead of a long unaligned overlap, and never
+        // longer than what's left of this song.
+        var seconds = plan?.fade ?? (smartTransitions ? 5 : crossfade)
+        if plan != nil, seconds > 0 { seconds = min(seconds, 6, max(0, length - t - 0.3)) }
         guard seconds > 0 || plan != nil else { return }
         guard (plan != nil ? length > seconds + 3 : length > seconds * 2 + 5),
               t >= (plan?.outAt ?? (length - seconds)) else { return }
@@ -456,7 +460,9 @@ enum SleepTimer: String, CaseIterable, Identifiable {
     /// Fades the outgoing song out once the incoming one is audible.
     /// Uses Spotify/Apple Music DJ curve for beat-matched mixes (retaining power under the intro,
     /// then fading sharply after the drop) or equal-power for natural fades.
-    private func fadeOutOutgoing(over seconds: TimeInterval, matched: Bool = false) {
+    /// `hold`: the share of the fade the outgoing song stays at full volume first.
+    /// `gentle`: a plain cosine after the hold, slower to drop away than the eased one.
+    private func fadeOutOutgoing(over seconds: TimeInterval, matched: Bool = false, hold: Double = 0, gentle: Bool = false) {
         guard let old = outgoing else { return }
         if seconds <= 0.05 {
             _ = old.trySet("ao-volume", "0.0")
@@ -469,7 +475,8 @@ enum SleepTimer: String, CaseIterable, Identifiable {
         let began = Date()
         let timer = Timer(timeInterval: 1.0 / 30, repeats: true) { [weak self] timer in
             let progress = min(1, Date().timeIntervalSince(began) / seconds)
-            let curve = cos(smoothstep(progress) * .pi / 2)
+            let q = min(1, max(0, (progress - hold) / max(0.05, 1 - hold)))
+            let curve = cos((gentle ? q : smoothstep(q)) * .pi / 2)
             _ = old.trySet("ao-volume", String(format: "%.1f", from * curve * 100))
             if progress >= 1 {
                 timer.invalidate()
@@ -538,6 +545,9 @@ enum SleepTimer: String, CaseIterable, Identifiable {
             // The song that's leaving bends to the new one's tempo, not the other way
             // round: the new song then never has to change speed, which you'd hear.
             if plan.matched { self.rampSpeed(of: self.engine, to: 1 / plan.speed, over: 4) }
+            // Tempos more than 2% apart: the new song also bends its half of the way,
+            // from its first note, and eases back once the mix is over.
+            incoming.set("speed", String(format: "%.4f", plan.matched ? plan.incomingSpeed : 1))
             incoming.load(audio: streams.audio, video: nil, start: plan.inAt, paused: true,
                           gainDb: self.matchLoudness ? streams.gainDb : 0)
         }
@@ -613,45 +623,68 @@ enum SleepTimer: String, CaseIterable, Identifiable {
         warmNeighbourCovers()
         publishNowPlaying()
         Task { @MainActor [weak self] in await self?.afterTrackStarted(video: false, height: self?.videoQuality ?? 1080) }
+        // When the basses swap in a beat-matched mix, the outgoing song keeps full volume until the swap.
+        let ownTime = plan.matched ? plan.speed : 1
+        // Beat-matched only: in a blend the tempos clash, so neither song is held loud.
+        let hold = plan.matched && plan.swapsBass && seconds > 0.05
+            ? min(0.8, (plan.swapDelay.map { $0 * ownTime } ?? seconds / 2) / seconds) : 0
+        // Long mixes are heard as long: the new song rises early enough to be noticed
+        // under the old one, and the old one trails off slowly after the swap.
+        let long = hold > 0 && seconds >= 12
         if seconds <= 0.05 {
             fadeLevel = 1.0
             applyVolume()
             fadeOutOutgoing(over: 0, matched: false)
         } else {
-            fade(to: 1, over: seconds, always: true, equalPower: true, matched: plan.matched)
-            fadeOutOutgoing(over: seconds, matched: plan.matched)
+            // In a long mix the new song's intro is at full volume by the swap (its bass
+            // still held back), the way a DJ brings an intro up under the outgoing track.
+            fade(to: 1, over: long ? seconds * max(hold, 0.3) : seconds, always: true, equalPower: true,
+                 matched: plan.matched, early: long)
+            // The outgoing song fades a little longer than the next one rises: its last
+            // chords ring out underneath.
+            fadeOutOutgoing(over: seconds + plan.ringOut * ownTime, matched: plan.matched, hold: hold, gentle: long)
         }
         // EQ automation, styled after Apple Music / Spotify Automix:
         let incoming = p.engine
         if plan.matched {
-            let swapTime = plan.swapDelay ?? (seconds / 2)
+            // The swap is planned in the outgoing song's own time; it runs at 1 / speed.
+            let swapTime = plan.swapDelay.map { $0 * plan.speed } ?? (seconds / 2)
             // Incoming sizzle opens smoothly over the intro before the drop
             ramp(after: 0, over: swapTime) { incoming.setHighs(-8 * (1 - $0)) }
             // The bass swap lands right on the downbeat drop over 1 beat
             let swapDuration = min(0.8, max(0.25, plan.beat * plan.speed))
-            ramp(after: max(0, swapTime - swapDuration * 0.2), over: swapDuration) {
-                incoming.setBass(-24 * (1 - $0))
-                old.setBass(-24 * $0)
+            if plan.swapsBass {
+                ramp(after: max(0, swapTime - swapDuration * 0.2), over: swapDuration) {
+                    incoming.setBass(-24 * (1 - $0))
+                    old.setBass(-24 * $0)
+                }
             }
             // Outgoing sizzle filters down gently after the drop (preserving vocal presence)
             let remaining = max(0.5, seconds - swapTime)
-            ramp(after: swapTime, over: remaining) { old.setHighs(-10 * $0) }
+            ramp(after: swapTime, over: remaining) { old.setHighs((long ? -6 : -10) * $0) }
+            // The new song's own tempo comes back slowly once it plays alone.
+            if plan.incomingSpeed != 1 {
+                let bent = plan.incomingSpeed
+                ramp(after: seconds, over: 8) { incoming.set("speed", String(format: "%.4f", bent + (1 - bent) * $0)) }
+            }
         } else if plan.onBeat {
             // Tempos too far apart to match: the new song comes in thin (no bass, soft
             // highs) under the old one, the bass swaps over two beats halfway, and the
             // old song's highs roll away in the second half, so the two kicks never clash.
             let swapTime = plan.swapDelay ?? seconds / 2
             let swapDuration = max(0.5, min(1.5, plan.beat * 2))
-            incoming.setBass(-24)
+            incoming.setBass(plan.swapsBass ? -24 : 0)
             incoming.setHighs(-8)
             old.setBass(0)
             old.setHighs(0)
             ramp(after: 0, over: swapTime) { incoming.setHighs(-8 * (1 - $0)) }
-            ramp(after: max(0, swapTime - swapDuration / 2), over: swapDuration) {
-                incoming.setBass(-24 * (1 - $0))
-                old.setBass(-24 * $0)
+            if plan.swapsBass {
+                ramp(after: max(0, swapTime - swapDuration / 2), over: swapDuration) {
+                    incoming.setBass(-24 * (1 - $0))
+                    old.setBass(-24 * $0)
+                }
             }
-            ramp(after: swapTime, over: max(0.5, seconds - swapTime)) { old.setHighs(-12 * $0) }
+            ramp(after: swapTime, over: max(0.5, seconds - swapTime)) { old.setHighs((long ? -6 : -12) * $0) }
         } else {
             // Rubato / Piano / Acoustic: Transparent natural sound at 0 dB
             old.setBass(0)
@@ -662,7 +695,7 @@ enum SleepTimer: String, CaseIterable, Identifiable {
         // How far apart the two songs' beats really landed (both started on a beat).
         DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
             guard let a = old.double("time-pos"), let b = p.engine.double("time-pos") else { return }
-            let offset = ((a - plan.outAt) * plan.speed - (b - plan.inAt)) * 1000
+            let offset = ((a - plan.outAt) * plan.speed - (b - plan.inAt) / plan.incomingSpeed) * 1000
             // Positive: the new song was heard late. Fold that into the next start.
             if let self, abs(offset) < 300 {
                 self.startLead = min(0.25, max(0, self.startLead + 0.5 * offset / 1000))
@@ -918,6 +951,7 @@ enum SleepTimer: String, CaseIterable, Identifiable {
         let fadeIn = crossfading || (smoothTransitions && !advancingNaturally)
         advancingNaturally = false
         isLoading = true
+        pendingSeek = nil
         isPlaying = autoplay
         position = start
         duration = song.duration
@@ -951,7 +985,6 @@ enum SleepTimer: String, CaseIterable, Identifiable {
                 }
                 self.fadeInWhenPlaying = fadeIn
                 self.awaitingFile = true
-        pendingSeek = nil
                 let begin = followLive ? self.livePosition + 0.2 : start
                 self.position = begin
                 if !followLive { self.engine.resetTransition() }
@@ -1119,14 +1152,24 @@ enum SleepTimer: String, CaseIterable, Identifiable {
             publishNowPlaying()
             return
         }
+        // The song ran out before its planned start fired (plans for songs that end
+        // cleanly sit in the last fraction of a second): the next one is already loaded
+        // and paused, so it starts now instead of being fetched again after a gap.
+        if repeatMode != .one, outgoing == nil, let p = prepared, p.ready, p.key == transitionKey {
+            preparedStart?.cancel()
+            preparedStart = nil
+            startPrepared()
+            if outgoing != nil { return }
+        }
         advancingNaturally = true
         if repeatMode == .one { load() } else { next() }
     }
 
     /// Ramps the volume between silent (0) and the slider's level (1), then runs `done`.
-    /// `always`: fade even with smooth transitions off (a crossfade).
+    /// `always`: fade even with smooth transitions off (a crossfade). `early`: a long
+    /// mix's new song, on the plain equal-power curve so it's heard coming in.
     private func fade(to target: Double, over seconds: Double, always: Bool = false, equalPower: Bool = false,
-                      matched: Bool = false, then done: (() -> Void)? = nil) {
+                      matched: Bool = false, early: Bool = false, then done: (() -> Void)? = nil) {
         fadeTimer?.invalidate()
         guard smoothTransitions || always, seconds > 0 else {
             fadeLevel = target
@@ -1140,7 +1183,9 @@ enum SleepTimer: String, CaseIterable, Identifiable {
             guard let self else { return timer.invalidate() }
             let progress = min(1, Date().timeIntervalSince(began) / seconds)
             let shaped: Double
-            if matched || equalPower {
+            if early {
+                shaped = sin(progress * .pi / 2)
+            } else if matched || equalPower {
                 // Eased at both ends: plain sin rises steeply at the start, and the
                 // new song jumps in.
                 shaped = sin(smoothstep(progress) * .pi / 2)
@@ -1226,6 +1271,14 @@ enum SleepTimer: String, CaseIterable, Identifiable {
     }
 
     private func publishNowPlaying() {
+        nowPlaying?.nextTitle = upNext.first.map { "\($0.title) · \($0.artist)" }
+        nowPlaying?.queue = upNext.prefix(5).map { "\($0.title) · \($0.artist)" }.joined(separator: "\n")
+        nowPlaying?.queueArt = upNext.prefix(5).map { $0.artwork?.absoluteString ?? "" }.joined(separator: "\n")
+        nowPlaying?.volume = volume
+        nowPlaying?.shuffle = shuffle
+        nowPlaying?.mixAt = upcomingMix
+        nowPlaying?.mixBegan = mix?.began
+        nowPlaying?.mixSeconds = mix?.seconds ?? 0
         nowPlaying?.update(song: current, position: position, duration: length, playing: isPlaying)
         // A restored song that hasn't been played yet isn't something you're listening to.
         if discordPresence, !needsLoad, !Demo.isOn {
@@ -1277,6 +1330,8 @@ struct TextPrompt {
 
 @Observable final class Router {
     var current = Route.home
+    /// Set while a song list with a filter is on screen: typed letters go there.
+    @ObservationIgnored var typeToFilter: (page: String, type: (String) -> Void)?
     var prompt: TextPrompt?
     /// The song whose Song Info sheet is open.
     var infoSong: Song?
@@ -1483,6 +1538,12 @@ enum KeyboardShortcuts {
         case 126 where !inList: player.volume = min(1, player.volume + 0.05); return true // up
         case 125 where !inList: player.volume = max(0, player.volume - 0.05); return true // down
         default: break
+        }
+        // On a song list, letters and numbers start the filter instead.
+        if let type = router.typeToFilter?.type, let text = event.characters, text.count == 1,
+           text.unicodeScalars.allSatisfy(CharacterSet.alphanumerics.contains) {
+            type(text)
+            return true
         }
         switch event.charactersIgnoringModifiers ?? "" {
         case "?": withAnimation(.snappy) { router.showShortcuts.toggle() }

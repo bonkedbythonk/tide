@@ -73,7 +73,8 @@ struct PageData: Codable {
     let id: String
     var title: String
     let subtitle: String
-    let artwork: URL?
+    var artwork: URL?
+    var description: String?
     var songs: [Song]
     /// YouTube's suggested songs for a playlist, shown separately, never mixed in.
     var suggestions: [Song]?

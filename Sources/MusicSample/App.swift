@@ -32,7 +32,11 @@ struct MusicSampleApp: App {
                 .environment(lyrics)
                 .environment(wallpaper)
                 .frame(minWidth: 1000, minHeight: 640)
-                .onAppear { NSApp.activate(ignoringOtherApps: true) }
+                .onAppear {
+                    NSApp.activate(ignoringOtherApps: true)
+                    NowPlayingCenter.lyrics = lyrics
+                    NowPlayingCenter.library = library
+                }
         }
         .defaultSize(width: 1280, height: 820)
         // No top bar, like anicat: content runs to the top edge and the window

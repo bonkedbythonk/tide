@@ -42,6 +42,7 @@ struct PlayerBar: View {
 /// Current song. Two-finger swipe over it skips.
 struct NowPlayingInfo: View {
     @Environment(Player.self) private var player
+    @Environment(Library.self) private var library
     @Environment(Router.self) private var router
 
     var body: some View {
@@ -86,6 +87,7 @@ struct NowPlayingInfo: View {
                 .id(shown.id)
                 .transition(.push(from: player.skipForward ? .trailing : .leading))
                 .contextMenu { SongMenu(songs: [s]) }
+                .draggable(library.dragPayload([s])) { DragPreview(songs: [s]) }
                 Spacer(minLength: 4)
                 LikeButton(songID: s.id)
                 StandaloneAddButton(songIDs: [s.id])
@@ -962,15 +964,14 @@ struct NowPlayingView: View {
 }
 
 /// Up Next inside Now Playing: transparent rows on the album colour, no list chrome.
-/// What already played sits above Now Playing, out of view until you scroll up; a
-/// scroll back down (or a small peek) settles on Now Playing again.
+/// What already played sits above Now Playing, out of view until you scroll up. A
+/// scroll that stops with Now Playing near the top settles it there.
 struct NowPlayingQueue: View {
     @Environment(Library.self) private var library
     @Environment(Player.self) private var player
     @State private var position = ScrollPosition(idType: String.self)
     /// How far Now Playing sits below the top: more than 0 while history shows.
     @State private var nowOffset: CGFloat = 0
-    @State private var movingDown = false
 
     var body: some View {
         let played = player.played.suffix(50)
@@ -997,10 +998,7 @@ struct NowPlayingQueue: View {
                 if let s = player.current {
                     Text("Now Playing").font(.headline).foregroundStyle(.secondary).padding(.horizontal, 8)
                         .id("now")
-                        .onGeometryChange(for: CGFloat.self) { $0.frame(in: .scrollView).minY } action: { y in
-                            movingDown = y < nowOffset
-                            nowOffset = y
-                        }
+                        .onGeometryChange(for: CGFloat.self) { $0.frame(in: .scrollView).minY } action: { nowOffset = $0 }
                     QueueRow(song: s, current: true)
                         .padding(8)
                         .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.12)))
@@ -1040,8 +1038,8 @@ struct NowPlayingQueue: View {
         }
         .onChange(of: player.current?.id) { position.scrollTo(id: "now", anchor: .top) }
         .onScrollPhaseChange { _, phase in
-            // Settle on Now Playing after a scroll back down, or after only peeking.
-            guard phase == .idle, !played.isEmpty, nowOffset > 1, movingDown || nowOffset < 60 else { return }
+            // Only when close: further up you're reading what played, and the list stays.
+            guard phase == .idle, nowOffset > 1, nowOffset < 140 else { return }
             withAnimation(.spring(duration: 0.35, bounce: 0.15)) { position.scrollTo(id: "now", anchor: .top) }
         }
     }

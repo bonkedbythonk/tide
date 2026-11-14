@@ -504,18 +504,69 @@ import SwiftUI
         }
     }
 
-    func renamePlaylist(_ id: String, to title: String) {
+    /// Saves a playlist's title and description, then its new cover when one was picked.
+    func editPlaylist(_ id: String, title: String, description: String, cover: URL?) {
         guard let i = playlists.firstIndex(where: { $0.id == id }) else { return }
         let old = playlists[i]
+        let oldPage = pages[id]
         playlists[i] = MediaItem(id: id, title: title, subtitle: old.subtitle, artwork: old.artwork, kind: old.kind)
         pages[id]?.title = title
+        pages[id]?.description = description
         send(undo: { [weak self] in
             if let j = self?.playlists.firstIndex(where: { $0.id == id }) { self?.playlists[j] = old }
-            self?.pages[id]?.title = old.title
+            self?.pages[id]?.title = oldPage?.title ?? old.title
+            self?.pages[id]?.description = oldPage?.description
         }) { [weak self, client] in
-            try await client.editPlaylist(Self.plainID(id), [["action": "ACTION_SET_PLAYLIST_NAME", "playlistName": title]])
+            try await client.editPlaylist(Self.plainID(id), [
+                ["action": "ACTION_SET_PLAYLIST_NAME", "playlistName": title],
+                ["action": "ACTION_SET_PLAYLIST_DESCRIPTION", "playlistDescription": description],
+            ])
             await MainActor.run { self?.keep(id) }
         }
+        guard let cover else { return }
+        send(undo: {}) { [weak self, client] in
+            guard let jpeg = Self.squareJPEG(cover) else {
+                return await MainActor.run { self?.showToast("Couldn't read that image") }
+            }
+            try await client.setPlaylistCover(Self.plainID(id), jpeg: jpeg)
+            await MainActor.run { self?.reloadCover(id) }
+        }
+    }
+
+    /// Shows the cover YouTube now has for a playlist, on its page and in the sidebar.
+    /// YouTube takes a few seconds to switch, so it asks until the cover's address changes.
+    @MainActor
+    private func reloadCover(_ id: String) {
+        let before = pages[id]?.artwork
+        Task {
+            var art = before
+            for _ in 0..<10 where art == before {
+                try? await Task.sleep(for: .seconds(2))
+                freshPages.remove(id)
+                art = await page(id)?.artwork
+            }
+            guard let art, art != before, let i = playlists.firstIndex(where: { $0.id == id }) else { return }
+            let p = playlists[i]
+            playlists[i] = MediaItem(id: id, title: p.title, subtitle: p.subtitle, artwork: art, kind: p.kind)
+            showToast("Cover updated")
+        }
+    }
+
+    /// The middle square of an image, at most 1200 px, as YouTube's square covers are.
+    private static func squareJPEG(_ file: URL) -> Data? {
+        guard let image = NSImage(contentsOf: file),
+              let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return nil }
+        let side = min(cg.width, cg.height)
+        guard let square = cg.cropping(to: CGRect(x: (cg.width - side) / 2, y: (cg.height - side) / 2,
+                                                  width: side, height: side)) else { return nil }
+        let out = min(side, 1200)
+        guard let ctx = CGContext(data: nil, width: out, height: out, bitsPerComponent: 8, bytesPerRow: 0,
+                                  space: CGColorSpaceCreateDeviceRGB(),
+                                  bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else { return nil }
+        ctx.interpolationQuality = .high
+        ctx.draw(square, in: CGRect(x: 0, y: 0, width: out, height: out))
+        guard let scaled = ctx.makeImage() else { return nil }
+        return NSBitmapImageRep(cgImage: scaled).representation(using: .jpeg, properties: [.compressionFactor: 0.9])
     }
 
     func deletePlaylist(_ id: String) {
@@ -569,6 +620,10 @@ import SwiftUI
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString("\(YTClient.origin)/\(path)", forType: .string)
         showToast("Link copied")
+    }
+
+    func showPlayingNext(_ songs: [Song]) {
+        showToast(songs.count == 1 ? "Playing next: \(songs[0].title)" : "Playing \(songs.count) songs next")
     }
 
     /// A Spotify search for the song, copied for friends on Spotify. An exact track

@@ -7,8 +7,8 @@ import SoundAnalysis
 // listened to (beats and loudness) and the crossfade is planned from that: quiet
 // tails and intros are skipped, the fade lasts a number of beats, and both songs
 // meet on a beat. When both beats are steady over the overlap and the tempos are
-// within 2%, the plan is a beat-matched mix: the next song plays at the current one's
-// tempo for up to 64 beats, and the bass swaps halfway. Classic beat tracking (onset envelope, autocorrelation tempo,
+// within 4%, the plan is a beat-matched mix: both songs play at one tempo for up to
+// 64 beats, downbeat on downbeat, and the bass swaps halfway. Classic beat tracking (onset envelope, autocorrelation tempo,
 // dynamic-programming beats); a trained model can replace `BeatTracker` later.
 // Nothing here depends on the rest of the app, so it can be tested on its own.
 
@@ -243,6 +243,9 @@ struct TransitionPlan: Codable {
     /// are in the current song's own time.
     var matched = false
     var speed = 1.0
+    /// The next song's speed during a beat-matched mix (1 unless the tempos are more
+    /// than 2% apart); it eases back to 1 once the mix is over.
+    var incomingSpeed = 1.0
     /// The current song's beat length (s), for timing the bass swap and the ease back.
     var beat: TimeInterval = 0
     /// Where the sections were found (each song's own time), when they were.
@@ -250,6 +253,13 @@ struct TransitionPlan: Codable {
     var drop: TimeInterval?
     /// Seconds from `outAt` when the drop lands and bass swaps. Nil for default half-way.
     var swapDelay: TimeInterval?
+    /// The outgoing song still has its low end over the mix, so the next one comes in
+    /// without bass and the two swap. False when it has already dropped its bass: the
+    /// next song's bass then rises with its volume instead of landing all at once.
+    var swapsBass = true
+    /// Seconds (own time) the outgoing song keeps sounding after `fade`, fading out
+    /// with its own closing ring-out under the next song, which is fully up by then.
+    var ringOut: TimeInterval = 0
 }
 
 extension BeatAnalysis {
@@ -314,6 +324,12 @@ extension BeatAnalysis {
         return min(beats.count - 1, idx + rem)
     }
 
+    /// Index of the first downbeat at or after `time`.
+    func firstDownbeat(atOrAfter time: TimeInterval) -> Int? {
+        guard let i = beats.firstIndex(where: { $0 >= time - 0.02 }) else { return nil }
+        return snapDownbeat(atOrAfter: i)
+    }
+
     /// Sub-150Hz bass energy in dB at the given beat index.
     func bassEnergyAt(beat index: Int) -> Float {
         guard beats.indices.contains(index), loudnessStep > 0 else { return -100 }
@@ -331,16 +347,44 @@ enum TransitionPlanner {
     ///   - fallbackFade: the fade used when the beat isn't steady enough to count in.
     static func plan(tail: BeatAnalysis, length: TimeInterval, head: BeatAnalysis,
                      fallbackFade: TimeInterval) -> TransitionPlan {
-        if let mix = matchedPlan(tail: tail, length: length, head: head) { return mix }
-        
-        // True end of audible sound in Song A (never cut off vocal outros or instrument decay):
-        let endA = max(lastLoud(tail) ?? length, length - 1.0)
-        // Song B starts from its very beginning (never skip into the track):
-        let startB = min(firstLoud(head) ?? 0, 0.15)
+        var plan = basePlan(tail: tail, length: length, head: head)
+        // When the beats line up and the basses swap, the outgoing song stays at full
+        // volume until the swap (the player holds it) and the mix runs to the end of its
+        // sound, so its outro is heard out under the rising new song rather than buried.
+        // Only when the beats line up: two unmatched tempos stay short and quiet together.
+        if plan.matched, plan.swapsBass {
+            plan.fade += plan.ringOut
+            plan.ringOut = 0
+            // A new song whose bass only comes in later (a drop after a thin intro):
+            // the swap waits for it, or the low end drops out between the two.
+            if let entry = bassEntry(head, from: plan.inAt) {
+                let rate = plan.matched ? plan.incomingSpeed * plan.speed : 1
+                var at = (entry - plan.inAt) / rate
+                if plan.matched, plan.beat > 0 { at = (at / plan.beat).rounded() * plan.beat }
+                if at > (plan.swapDelay ?? plan.fade / 2) { plan.swapDelay = min(at, max(0, plan.fade - 0.5)) }
+            }
+        }
+        return plan
+    }
 
-        let rawLastA = tail.beats.lastIndex(where: { $0 <= endA }) ?? max(0, tail.beats.count - 1)
+    private static func basePlan(tail: BeatAnalysis, length: TimeInterval, head: BeatAnalysis) -> TransitionPlan {
+        // Where the outgoing song's sound really ends: silence after it (often many
+        // seconds on YouTube uploads) is skipped, decay down to -48 dB is kept.
+        let endA = min(length, (lastLoud(tail) ?? length) + 0.3)
+        // The next song starts on its first sound, not on the silence before it.
+        let startB = max(0, (firstLoud(head) ?? 0) - 0.05)
+        // Mixes are over by the time the outgoing song drops away on its own (its last
+        // words and chords ring out under the new song), or the level falls into a hole.
+        let mixEnd = min(endA, (bodyEnd(tail) ?? endA) + 0.5)
+        if var mix = matchedPlan(tail: tail, head: head, endA: mixEnd, startB: startB) {
+            mix.swapsBass = bassCarries(tail, from: mix.outAt, to: mix.outAt + mix.fade)
+            mix.ringOut = max(0, endA - mixEnd)
+            return mix
+        }
+
+        let rawLastA = tail.beats.lastIndex(where: { $0 <= mixEnd }) ?? max(0, tail.beats.count - 1)
         let lastBeatA = tail.snapDownbeat(atOrBefore: rawLastA)
-        let finalDownbeatA = !tail.beats.isEmpty ? tail.beats[lastBeatA] : (endA - 0.5)
+        let finalDownbeatA = !tail.beats.isEmpty ? tail.beats[lastBeatA] : (mixEnd - 0.5)
 
         if tail.isSteady && head.isSteady {
             // Both steady, tempos too far apart to match without audible stretching:
@@ -352,40 +396,71 @@ enum TransitionPlanner {
             let rawStart = tail.beats.lastIndex(where: { $0 <= finalDownbeatA - lengthBeats * beatPeriod })
                 ?? max(0, lastBeatA - Int(lengthBeats))
             let startIndex = tail.snapDownbeat(atOrBefore: rawStart)
-            var outAt = max(tail.start + 1, tail.beats.isEmpty ? endA - 12 : tail.beats[startIndex])
+            var outAt = max(tail.start + 1, tail.beats.isEmpty ? mixEnd - 12 : tail.beats[startIndex])
             // Never fade a voice out mid-line: wait for the singing to stop (on the
             // next downbeat), keeping at least 6 s for the blend.
             if let voice = tail.voiceEnd, voice > outAt {
                 let after = tail.beats.firstIndex(where: { $0 >= voice }).map { tail.beats[tail.snapDownbeat(atOrAfter: $0)] } ?? voice
-                outAt = max(outAt, min(after, endA - 6))
+                outAt = max(outAt, min(after, mixEnd - 6))
+                // Back onto a downbeat at or before, so the next song still comes in on the one.
+                if let i = tail.beats.lastIndex(where: { $0 <= outAt + 0.02 }) {
+                    outAt = max(tail.start + 1, tail.beats[tail.snapDownbeat(atOrBefore: i)])
+                }
             }
-            let fade = endA - outAt
-            return TransitionPlan(outAt: outAt, inAt: startB, fade: fade, onBeat: true,
-                                  matched: false, beat: beatPeriod, swapDelay: fade / 2)
+            // The next song's first downbeat lands on the outgoing song's downbeat, so the
+            // blend opens on the one even though the tempos then drift apart.
+            // Both on their beat lines over the first 16 beats, not on single tracked beats.
+            var inAt = startB
+            if let first = head.firstDownbeat(atOrAfter: startB), head.beats[first] - startB < 3 {
+                inAt = head.beats[first]
+                if first + 16 < head.beats.count, let line = fit(Array(head.beats[first...(first + 16)])) {
+                    inAt = max(0, refine(head, first: line.first, period: line.period, count: 16).first)
+                }
+            }
+            if let i = tail.beats.firstIndex(where: { abs($0 - outAt) < 0.02 }), i + 16 < tail.beats.count,
+               let line = fit(Array(tail.beats[i...(i + 16)])) {
+                outAt = refine(tail, first: line.first, period: line.period, count: 16).first
+            }
+            let fade = max(0, mixEnd - outAt)
+            return TransitionPlan(outAt: outAt, inAt: inAt, fade: fade, onBeat: true,
+                                  matched: false, beat: beatPeriod, swapDelay: fade / 2,
+                                  swapsBass: bassCarries(tail, from: outAt, to: outAt + fade),
+                                  ringOut: max(0, endA - mixEnd))
         } else {
             // Piano covers, rubato, acoustic solos, soundtracks (no steady drum beat):
-            // No fade needed! The piano / acoustic piece plays 100% untouched to its natural end
-            // (allowing closing chords and room reverb to decay completely without artificial volume reduction).
-            // Next track starts cleanly right at endA at 100% volume with 0s overlap, skipping dead video air.
+            // the piece plays untouched to the end of its sound (closing chords and room
+            // reverb decay fully) and the next starts at full volume on its first sound,
+            // with no overlap and no dead air.
             let outAt = max(tail.start + 1, endA)
             return TransitionPlan(outAt: outAt, inAt: startB, fade: 0, onBeat: false,
                                   matched: false)
         }
     }
 
-    /// A beat-matched mix, or nil when the beats aren't steady enough over the
-    /// overlap or the tempos are too far apart (more than 2% after octave folding: more stretch wobbles).
-    /// Apple Music / Spotify style 16 to 32 bar (18-30s) mix building Song B's intro under Song A!
-    private static func matchedPlan(tail: BeatAnalysis, length: TimeInterval, head: BeatAnalysis) -> TransitionPlan? {
-        guard tail.isSteady && head.isSteady else { return nil }
-        guard let match = tempoMatch(bpmA: tail.bpm, bpmB: head.bpm, maxDiff: 0.02) else { return nil }
+    /// Largest tempo gap a beat-matched mix bends across. Up to 2% the outgoing song
+    /// bends alone; past that both songs bend half the way, so neither moves more
+    /// than 2% (more than that and sustained synths wobble).
+    static let maxTempoGap = 0.04
 
-        let endA = max(lastLoud(tail) ?? length, length - 1.0)
-        let startB = min(firstLoud(head) ?? 0, 0.15)
+    /// A beat-matched mix, or nil when the beats aren't steady enough over the
+    /// overlap or the tempos are too far apart. 16 to 64 beats of the next song's
+    /// intro under the outgoing song's outro, downbeat on downbeat.
+    private static func matchedPlan(tail: BeatAnalysis, head: BeatAnalysis,
+                                    endA: TimeInterval, startB: TimeInterval) -> TransitionPlan? {
+        guard tail.isSteady && head.isSteady, tail.bpm > 30, head.bpm > 30,
+              abs(tail.bpm / head.bpm - 1) <= maxTempoGap + 0.01 else { return nil }
         guard let rawLast = tail.beats.lastIndex(where: { $0 <= endA }) else { return nil }
         let last = tail.snapDownbeat(atOrBefore: rawLast)
+        // The next song starts on its first downbeat, which lands on one of the
+        // outgoing song's downbeats: beats and bars line up from the first hit.
+        guard let first = head.firstDownbeat(atOrAfter: startB), head.beats[first] - startB < 3 else { return nil }
 
-        let drop = dropAt(head, first: 0)
+        // The next song's drop, in beats from its first downbeat: where its bass comes in
+        // (whole bars), else where it gets clearly fuller.
+        let bassIn = bassEntry(head, from: head.beats[first])
+            .flatMap { t in head.beats.firstIndex(where: { $0 >= t - 0.05 }) }
+            .map { (($0 - first + 2) / 4) * 4 }
+        let drop = bassIn.flatMap { $0 >= 8 ? $0 : nil } ?? dropAt(head, first: first).map { $0 - first }
         let outro = outroStart(tail, last: last)
 
         // Prevent transition from invading the vocal chorus or main body of Song A:
@@ -399,41 +474,65 @@ enum TransitionPlanner {
 
         var candidates: [(startA: Int, count: Int, swapBeats: Int)] = []
 
-        // If Song B has a detected drop within the outro window:
-        if let drop, drop >= 16 && drop <= maxMixBeats {
-            let dropPhrase = (drop / 16) * 16
-            candidates.append((startA: last - dropPhrase, count: dropPhrase + 16, swapBeats: dropPhrase))
+        // The next song's drop lands where the outgoing song's body ends, and the bass
+        // swaps there: the old song carries the low end until the new one takes it.
+        if let drop, drop >= 8, drop <= 64 {
+            candidates.append((startA: last - drop, count: drop, swapBeats: drop))
         }
 
         // Standard phrase automix (64, 48, 32, 16 beats) capped to available outro beats:
         for count in [64, 48, 32, 16].filter({ $0 <= maxMixBeats }) {
-            candidates.append((startA: last - count, count: count, swapBeats: max(1, count - 16)))
+            // The bass swaps 16 beats before the end, or halfway through a 16-beat mix:
+            // earlier, the outgoing bass is gone while the new song is still too quiet to carry the low end.
+            candidates.append((startA: last - count, count: count, swapBeats: count <= 16 ? count / 2 : count - 16))
         }
 
+        // A mix that starts while the outgoing song is still singing is kept only if
+        // nothing later is possible: the drop-aligned one (no gap between the songs),
+        // else the shortest, so the voice is covered least.
+        var underVoice: TransitionPlan?
+        var underVoiceIsDrop = false
         for cand in candidates {
-            guard cand.startA >= 0, cand.startA + cand.count < tail.beats.count else { continue }
-            guard cand.count < head.beats.count else { continue }
+            guard cand.startA >= 0, cand.startA + cand.count < tail.beats.count,
+                  first + cand.count < head.beats.count else { continue }
 
             let a = Array(tail.beats[cand.startA...(cand.startA + cand.count)])
-            let b = Array(head.beats[0...min(cand.count, head.beats.count - 1)])
+            let b = Array(head.beats[first...(first + cand.count)])
 
             guard let fitA = fit(a), fitA.jitter < 0.06,
                   let fitB = fit(b), fitB.jitter < 0.06 else { continue }
             guard onHits(tail, a), onHits(head, b) else { continue }
+            // Both songs' downbeats where their beat lines put them, not where the
+            // tracker happened to place a single beat, then nudged onto the hits.
+            let gridA = refine(tail, first: fitA.first, period: fitA.period, count: cand.count)
+            let gridB = refine(head, first: fitB.first, period: fitB.period, count: cand.count)
+            // The tempo ratio from the beat lengths over this very stretch: the overall
+            // BPM is too coarse, and 0.3% off drifts 90 ms over 64 beats.
+            let ratio = gridB.period / gridA.period
+            guard abs(ratio - 1) <= maxTempoGap else { continue }
+            let rateA = abs(ratio - 1) <= 0.02 ? 1 / ratio : 1 / ratio.squareRoot()
+            let rateB = rateA * ratio
 
-            let outAt = a[0]
-            if let voice = tail.voiceEnd, outAt < voice - 0.5 { continue }
+            let outAt = gridA.first
+            let inAt = max(0, gridB.first)
             let fade = endA - outAt
-            guard fade >= 10.0 && fade <= 35.0 else { continue }
+            guard fade >= 6 && fade <= 35 else { continue }
 
-            let swapDelay = Double(cand.swapBeats) * fitA.period
-            return TransitionPlan(outAt: outAt, inAt: startB, fade: fade, onBeat: true,
-                                  matched: true, speed: match.speed, beat: fitA.period,
-                                  outro: outroStart(tail, last: last).map { tail.beats[$0] },
-                                  drop: drop.map { head.beats[$0] },
-                                  swapDelay: swapDelay)
+            let plan = TransitionPlan(outAt: outAt, inAt: inAt, fade: fade, onBeat: true,
+                                      matched: true, speed: 1 / rateA, incomingSpeed: rateB, beat: gridA.period,
+                                      outro: outro.map { tail.beats[$0] },
+                                      drop: drop.map { head.beats[first + $0] },
+                                      swapDelay: Double(cand.swapBeats) * gridA.period)
+            if let voice = tail.voiceEnd, outAt < voice - 0.5 {
+                if !underVoiceIsDrop {
+                    underVoice = plan
+                    underVoiceIsDrop = cand.swapBeats == cand.count
+                }
+                continue
+            }
+            return plan
         }
-        return nil
+        return underVoice
     }
 
     /// Bar-sized steps (4 beats) through a stretch, compared against the next on loudness and bass.
@@ -472,9 +571,10 @@ enum TransitionPlanner {
         return nil
     }
 
-    /// The beat length from a straight line through the beat times, and how far the
-    /// beats wander from that line (s, root mean square).
-    static func fit(_ beats: [TimeInterval]) -> (period: TimeInterval, jitter: TimeInterval)? {
+    /// The beat length from a straight line through the beat times, how far the
+    /// beats wander from that line (s, root mean square), and where the line puts the
+    /// first beat: steadier than the first tracked beat, which is often tens of ms off.
+    static func fit(_ beats: [TimeInterval]) -> (period: TimeInterval, jitter: TimeInterval, first: TimeInterval)? {
         let n = Double(beats.count)
         guard beats.count >= 8 else { return nil }
         let meanI = (n - 1) / 2
@@ -487,7 +587,44 @@ enum TransitionPlanner {
         let period = num / den
         guard period > 0 else { return nil }
         let rms = sqrt(beats.enumerated().map { i, t in pow(t - (meanT + (Double(i) - meanI) * period), 2) }.reduce(0, +) / n)
-        return (period, rms)
+        return (period, rms, meanT - meanI * period)
+    }
+
+    /// A beat line moved onto the music: small shifts (up to 60 ms) and tempo changes
+    /// (up to 0.6%) are tried, and the one whose beats sit on the strongest onsets
+    /// wins. The tracked beats come in 23 ms steps and wander; a line fitted to all
+    /// the hits of a stretch lands within a few milliseconds.
+    static func refine(_ a: BeatAnalysis, first: TimeInterval, period: TimeInterval,
+                       count: Int) -> (first: TimeInterval, period: TimeInterval) {
+        guard a.loudnessStep > 0, count > 0, a.onset.count > 2 else { return (first, period) }
+        let fps = 1 / a.loudnessStep
+        func onset(at t: TimeInterval) -> Double {
+            let x = (t - a.start) * fps
+            let i = Int(x.rounded(.down))
+            guard i >= 0, i + 1 < a.onset.count else { return 0 }
+            let f = x - Double(i)
+            return Double(a.onset[i]) * (1 - f) + Double(a.onset[i + 1]) * f
+        }
+        // Tempo changes pivot on the middle of the stretch, so they don't drag the start.
+        let middle = Double(count) / 2
+        var best = (first: first, period: period), bestScore = -Double.infinity
+        var steady = best, steadyScore = -Double.infinity
+        for dp in stride(from: -0.006, through: 0.006, by: 0.0005) {
+            let p = period * (1 + dp)
+            let pivot = first + middle * period - middle * p
+            for shift in stride(from: -0.06, through: 0.06, by: 0.002) {
+                let f = pivot + shift
+                var score = 0.0
+                for k in 0...count { score += onset(at: f + Double(k) * p) }
+                // Ties go to the smallest change.
+                score -= (abs(shift) + abs(dp) * 10) * 1e-3
+                if score > bestScore { bestScore = score; best = (f, p) }
+                if dp == 0, score > steadyScore { steadyScore = score; steady = (f, p) }
+            }
+        }
+        // A tempo pushed to the edge of the search fits the hits no better than chance
+        // (a thin intro): keep the tracked tempo, only shifted.
+        return abs(best.period / period - 1) > 0.0055 ? steady : best
     }
 
     /// Most beats (35% or more) sit on a real hit. Even when drums thin out in an outro,
@@ -509,6 +646,56 @@ enum TransitionPlanner {
         // True silence is below -48 dBFS, or 38 dB below loud passages.
         // This ensures vocal outros, quiet acoustic instruments, and decay tails are never treated as silence.
         return min(-48.0, loud - 38.0)
+    }
+
+    /// Whether the song keeps its low end from `from` to `to`: the typical (median) bass
+    /// there within 15 dB of the 16 s before. A breakdown or outro without kick and bass
+    /// falls far below.
+    static func bassCarries(_ a: BeatAnalysis, from: TimeInterval, to: TimeInterval) -> Bool {
+        guard a.loudnessStep > 0 else { return true }
+        func median(_ lo: TimeInterval, _ hi: TimeInterval) -> Float? {
+            let i = max(0, Int((lo - a.start) / a.loudnessStep)), j = min(a.bass.count, Int((hi - a.start) / a.loudnessStep))
+            guard j - i > 10 else { return nil }
+            let v = a.bass[i..<j].sorted()
+            return v[v.count / 2]
+        }
+        guard let before = median(from - 16, from), let during = median(from, to) else { return true }
+        return during > before - 15
+    }
+
+    /// Where the song's bass comes in, from `from` on: the first half second within
+    /// 10 dB of its usual (80th percentile) low end.
+    static func bassEntry(_ a: BeatAnalysis, from: TimeInterval) -> TimeInterval? {
+        guard a.loudnessStep > 0, a.bass.count > 10 else { return nil }
+        let sorted = a.bass.sorted()
+        let floor = sorted[Int(Double(sorted.count - 1) * 0.8)] - 10
+        let span = max(1, Int(0.5 / a.loudnessStep))
+        var i = max(0, Int((from - a.start) / a.loudnessStep))
+        while i + span <= a.bass.count {
+            var power: Float = 0
+            for k in i..<(i + span) { power += pow(10, a.bass[k] / 10) }
+            if 10 * log10(power / Float(span)) > floor { return a.start + Double(i) * a.loudnessStep }
+            i += span / 2
+        }
+        return nil
+    }
+
+    /// Where the song's body ends: the last moment, over half-second stretches, within
+    /// 12 dB of its loud passages. After it come only the closing ring-out and fade.
+    static func bodyEnd(_ a: BeatAnalysis) -> TimeInterval? {
+        guard a.loudnessStep > 0, a.loudness.count > 10 else { return nil }
+        let sorted = a.loudness.sorted()
+        let floor = sorted[Int(Double(sorted.count - 1) * 0.8)] - 12
+        let span = max(1, Int(0.5 / a.loudnessStep))
+        var i = a.loudness.count - span
+        while i >= 0 {
+            // Average power of the stretch, so the gaps between hits don't count as quiet.
+            var power: Float = 0
+            for k in i..<(i + span) { power += pow(10, a.loudness[k] / 10) }
+            if 10 * log10(power / Float(span)) > floor { return a.start + Double(i + span) * a.loudnessStep }
+            i -= span / 2
+        }
+        return nil
     }
 
     static func lastLoud(_ a: BeatAnalysis) -> TimeInterval? {

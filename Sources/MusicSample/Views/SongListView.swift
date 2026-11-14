@@ -53,6 +53,7 @@ struct SongListView: View {
     @State private var appeared = false
     @State private var anchor: String?
     @State private var confirmDelete = false
+    @State private var editing = false
 
     private var items: [SongRowItem] {
         var seen = Set<String>()
@@ -131,6 +132,14 @@ struct SongListView: View {
                 .keyboardShortcut("f", modifiers: .command)
                 .opacity(0)
         }
+        .onAppear {
+            router.typeToFilter = (page.id, { text in
+                filterFocused = true
+                DispatchQueue.main.async { filter += text }
+            })
+        }
+        // The next page can appear before this one goes; leave its filter alone.
+        .onDisappear { if router.typeToFilter?.page == page.id { router.typeToFilter = nil } }
     }
 
     private func row(_ item: SongRowItem, in list: [SongRowItem], playlist: [Song], suggested: [Song]) -> some View {
@@ -177,6 +186,9 @@ struct SongListView: View {
                     .filter { !$0.isEmpty }.joined(separator: " • "))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
+                if page.owned == true, let description = page.description, !description.isEmpty {
+                    Text(description).foregroundStyle(.secondary).lineLimit(2)
+                }
                 HStack(spacing: 10) {
                     Button { player.playAll(visible) } label: {
                         Label("Play", systemImage: "play.fill")
@@ -213,11 +225,7 @@ struct SongListView: View {
                             Button("Copy Link") { library.copyLink(page.id) }
                             if page.owned == true, page.id != Library.likedID {
                                 Divider()
-                                Button("Rename…") {
-                                    router.prompt = TextPrompt(title: "Rename Playlist", button: "Rename", text: page.title) {
-                                        library.renamePlaylist(page.id, to: $0)
-                                    }
-                                }
+                                Button("Edit Playlist…") { editing = true }
                                 Button("Delete Playlist…", role: .destructive) { confirmDelete = true }
                             }
                         } label: {
@@ -227,6 +235,7 @@ struct SongListView: View {
                         .menuIndicator(.hidden)
                         .buttonStyle(PillButtonStyle(prominent: false))
                         .fixedSize()
+                        .sheet(isPresented: $editing) { PlaylistEditSheet(page: page) }
                         .confirmationDialog("Delete \(page.title)?", isPresented: $confirmDelete) {
                             Button("Delete", role: .destructive) {
                                 library.deletePlaylist(page.id)
@@ -573,6 +582,11 @@ struct SongRow: View {
                 // buttons made long playlists slow to scroll.
                 HStack(spacing: 12) {
                     if hovering || pickerOpen {
+                        PlayNextButton(song: item.song)
+                    } else {
+                        Color.clear.frame(width: 16)
+                    }
+                    if hovering || pickerOpen {
                         LikeButton(songID: item.id)
                     } else if library.isLiked(item.id) {
                         // A plain heart until hovered: on Liked Songs every row has one, and
@@ -587,7 +601,7 @@ struct SongRow: View {
                         Color.clear.frame(width: 16)
                     }
                 }
-                .frame(width: 48)
+                .frame(width: 76)
             }
             Text(item.album)
                 .font(.callout)
@@ -654,5 +668,63 @@ private struct PanelRow: ViewModifier {
                     }
                 }
             )
+    }
+}
+
+/// Title, description and cover of one of your playlists, saved to YouTube Music.
+struct PlaylistEditSheet: View {
+    @Environment(Library.self) private var library
+    @Environment(\.dismiss) private var dismiss
+    let page: PageData
+    @State private var title = ""
+    @State private var description = ""
+    @State private var cover: URL?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Edit Playlist").font(.headline)
+            HStack(alignment: .top, spacing: 16) {
+                VStack(spacing: 8) {
+                    Group {
+                        if let cover, let image = NSImage(contentsOf: cover) {
+                            Image(nsImage: image).resizable().scaledToFill()
+                                .frame(width: 140, height: 140)
+                                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        } else {
+                            Artwork(hue: Double(page.id.stableHash % 1000) / 1000, url: page.artwork, side: 140, radius: 8)
+                        }
+                    }
+                    Button("Choose Image…", action: chooseCover)
+                }
+                VStack(alignment: .leading, spacing: 10) {
+                    TextField("Title", text: $title)
+                    TextField("Description", text: $description, axis: .vertical)
+                        .lineLimit(5, reservesSpace: true)
+                }
+                .textFieldStyle(.roundedBorder)
+            }
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
+                Button("Save") {
+                    library.editPlaylist(page.id, title: title, description: description, cover: cover)
+                    dismiss()
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(title.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+        }
+        .padding(20)
+        .frame(width: 480)
+        .onAppear {
+            title = page.title
+            description = page.description ?? ""
+        }
+    }
+
+    private func chooseCover() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.jpeg, .png]
+        if panel.runModal() == .OK { cover = panel.url }
     }
 }

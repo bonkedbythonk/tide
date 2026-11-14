@@ -79,6 +79,21 @@ struct AddToPlaylistButton: View {
     }
 }
 
+/// Puts the song first in Up Next.
+struct PlayNextButton: View {
+    @Environment(Player.self) private var player
+    @Environment(Library.self) private var library
+    let song: Song
+
+    var body: some View {
+        Button { player.playNext([song]); library.showPlayingNext([song]) } label: {
+            Image(systemName: "text.line.first.and.arrowtriangle.forward").foregroundStyle(Color.secondary)
+        }
+        .buttonStyle(.borderless)
+        .help("Play next")
+    }
+}
+
 /// Self-contained version for places that always show the button.
 /// Replaces Up Next with the song's radio; the song keeps playing.
 struct RadioButton: View {
@@ -261,7 +276,7 @@ struct SongMenu: View {
         if songs.count == 1, let song = songs.first {
             Button("Start Radio") { player.playRadio(song) }
         }
-        Button("Play Next") { player.playNext(songs) }
+        Button("Play Next") { player.playNext(songs); library.showPlayingNext(songs) }
         Button("Add to Queue") { player.addToQueue(songs) }
         if let upNextIndex {
             Button("Remove from Up Next") {
@@ -336,6 +351,7 @@ struct SongTile: View {
             }
             Spacer(minLength: 4)
             if hovering || pickerOpen {
+                PlayNextButton(song: song)
                 LikeButton(songID: song.id)
                 AddToPlaylistButton(songIDs: [song.id], open: $pickerOpen)
             }

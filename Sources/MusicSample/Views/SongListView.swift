@@ -111,6 +111,13 @@ struct SongListView: View {
           }
           .padding(.bottom, 20)
         }
+        // Songs dropped anywhere on an open playlist are added to the end of it.
+        .dropDestination(for: String.self) { items, _ in
+            let ids = SongDrag.ids(from: items)
+            guard let playlistID, !ids.isEmpty else { return false }
+            library.add(ids, to: playlistID)
+            return true
+        }
         .opacity(appeared ? 1 : 0)
         .offset(y: appeared ? 0 : 8)
         .onAppear {

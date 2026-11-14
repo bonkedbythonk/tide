@@ -179,6 +179,103 @@ import SwiftUI
         return songs
     }
 
+    /// Songs for a mood. Artists the request names lead: three of theirs to every one
+    /// of the rest. The rest is half your own listening, half searches.
+    /// Your side: songs from Home, history and likes that fit. The search side: the mood's searches, with the top two playlists of a
+    /// playlist search opened. Within each side the sources take turns, so no one
+    /// search or playlist fills the start. Hour-long compilations are left out.
+    @MainActor
+    func moodSongs(_ prompt: String) async -> [Song] {
+        async let mine = personalMoodSongs(prompt)
+        let request = await MoodPlanner.request(for: prompt)
+        async let named = withTaskGroup(of: [Song].self) { group in
+            for artist in request.artists { group.addTask { await self.artistSongs(artist) } }
+            var all: [[Song]] = []
+            for await songs in group { all.append(songs) }
+            return all
+        }
+        let found = await withTaskGroup(of: [[Song]].self) { group in
+            for search in request.searches {
+                group.addTask { [client] in
+                    guard let json = try? await client.search(search.query, params: search.kind.rawValue) else { return [] }
+                    let result = YTParse.search(json)
+                    guard search.kind == .playlists else { return [result.songs] }
+                    var lists: [[Song]] = []
+                    for item in result.items.filter({ $0.kind == .playlist }).prefix(2) {
+                        guard let page = try? await client.browse(item.id) else { continue }
+                        lists.append(YTParse.page(page, id: item.id).data.songs)
+                    }
+                    return lists
+                }
+            }
+            var all: [[Song]] = []
+            for await lists in group { all += lists }
+            return all
+        }
+        var personal = Self.takingTurns(await mine), searched = Self.takingTurns(found)
+        var rest: [Song] = []
+        while !personal.isEmpty || !searched.isEmpty {
+            if !personal.isEmpty { rest.append(personal.removeFirst()) }
+            if !searched.isEmpty { rest.append(searched.removeFirst()) }
+        }
+        var featured = Self.takingTurns(await named)
+        var mixed: [Song] = []
+        while !featured.isEmpty {
+            mixed += featured.prefix(3)
+            featured.removeFirst(min(3, featured.count))
+            if !rest.isEmpty { mixed.append(rest.removeFirst()) }
+        }
+        mixed += rest
+        var seen = Set<String>()
+        mixed = mixed.filter { $0.duration < 12 * 60 && seen.insert($0.id).inserted }
+        mixed.forEach(remember)
+        return mixed
+    }
+
+    /// An artist's songs: their page's songs and full song list, plus song and video
+    /// search results credited to them (covers channels live mostly in videos).
+    private func artistSongs(_ name: String) async -> [Song] {
+        func theirs(_ kind: SearchKind) async -> [Song] {
+            guard let json = try? await client.search(name, params: kind.rawValue) else { return [] }
+            return YTParse.search(json).songs.filter { MoodPlanner.credits($0.artist, name) }
+        }
+        var found = await theirs(.videos) + theirs(.songs)
+        if let json = try? await client.search(name, params: SearchKind.artists.rawValue),
+           let artist = YTParse.search(json).items.first(where: { $0.kind == .artist && MoodPlanner.credits($0.title, name) }),
+           let page = try? await client.browse(artist.id) {
+            let data = YTParse.page(page, id: artist.id).data
+            found += data.songs
+            if let all = data.allSongsID, let list = try? await client.browse(all) {
+                found += YTParse.page(list, id: all).data.songs
+            }
+        }
+        return found
+    }
+
+    /// Your songs that fit the mood. Their radios are left out: one song wrongly
+    /// judged to fit brings a whole radio of the wrong kind.
+    @MainActor
+    private func personalMoodSongs(_ prompt: String) async -> [[Song]] {
+        let history = await page(Self.historyID)?.songs ?? []
+        let liked = pages[Self.likedID]?.songs ?? []
+        var seen = Set<String>()
+        let candidates = (home.flatMap(\.songs) + history.prefix(100) + liked.prefix(100)).filter { seen.insert($0.id).inserted }
+        return [await MoodPlanner.fitting(candidates, prompt: prompt)]
+    }
+
+    /// Shuffles each list, then takes one from each in turn.
+    private static func takingTurns(_ lists: [[Song]]) -> [Song] {
+        var queues = lists.map { $0.shuffled() }.filter { !$0.isEmpty }
+        var out: [Song] = []
+        while !queues.isEmpty {
+            for i in queues.indices.reversed() {
+                out.append(queues[i].removeFirst())
+                if queues[i].isEmpty { queues.remove(at: i) }
+            }
+        }
+        return out
+    }
+
     /// One shelf per kind of result, all asked for at once.
     @MainActor
     func search(_ query: String) async -> [HomeShelf] {

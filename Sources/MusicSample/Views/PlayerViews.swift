@@ -443,14 +443,9 @@ struct SidePanelView: View {
     var body: some View {
         @Bindable var router = router
         VStack(spacing: 0) {
-            Picker("", selection: $router.panelTab) {
-                Text("Up Next").tag(PanelTab.queue)
-                Text("Lyrics").tag(PanelTab.lyrics)
-                Text("Comments").tag(PanelTab.comments)
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .padding(12)
+            PillSwitch(options: [("Up Next", PanelTab.queue), ("Lyrics", PanelTab.lyrics), ("Comments", PanelTab.comments)],
+                       selection: $router.panelTab)
+                .padding(12)
             switch router.panelTab {
             case .queue: QueueView()
             case .lyrics: LyricsView(fontSize: 20)
@@ -467,32 +462,46 @@ struct QueueView: View {
     @Environment(Player.self) private var player
 
     var body: some View {
+        VStack(spacing: 0) {
+            MoodField().padding(.horizontal, 12).padding(.bottom, 8)
+            queueList
+        }
+    }
+
+    /// Styled like Now Playing's Up Next (plain rows, hover highlight, no section
+    /// bars); still a List, which gives drag to reorder and swipe to remove.
+    private var queueList: some View {
         List {
             if let s = player.current {
-                Section("Now Playing") { QueueRow(song: s, current: true) }
+                header { Text("Now Playing") }
+                QueueRow(song: s, current: true)
+                    .padding(8)
+                    .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.12)))
+                    .queueRowStyle()
             }
-            Section {
-                if player.upNext.isEmpty {
-                    Text("Drop songs here to queue them").foregroundStyle(.secondary)
-                }
-                ForEach(QueueEntry.list(player.upNext)) { entry in
-                    let i = entry.index, s = entry.song
-                    QueueRow(song: s, current: false)
-                        .contentShape(Rectangle())
-                        .onTapGesture { player.jump(to: player.index + 1 + i) }
-                        .contextMenu { SongMenu(songs: [s], upNextIndex: i) }
-                }
-                .onMove { player.moveUpNext(from: $0, to: $1) }
-                .onDelete { player.removeUpNext(at: $0) }
-            } header: {
-                HStack {
-                    Text("Up Next")
-                    Spacer()
-                    UpNextActions()
-                }
+            header {
+                Text("Up Next")
+                Spacer()
+                UpNextActions()
             }
+            .padding(.top, 12)
+            if player.upNext.isEmpty {
+                Text("Drop songs here to queue them").foregroundStyle(.secondary).padding(8).queueRowStyle()
+            }
+            ForEach(QueueEntry.list(player.upNext)) { entry in
+                let i = entry.index, s = entry.song
+                QueueRow(song: s, current: false)
+                    .padding(8)
+                    .contentShape(Rectangle())
+                    .modifier(HoverHighlight())
+                    .onTapGesture { player.jump(to: player.index + 1 + i) }
+                    .contextMenu { SongMenu(songs: [s], upNextIndex: i) }
+                    .queueRowStyle()
+            }
+            .onMove { player.moveUpNext(from: $0, to: $1) }
+            .onDelete { player.removeUpNext(at: $0) }
         }
-        .listStyle(.inset)
+        .listStyle(.plain)
         .scrollContentBackground(.hidden)
         .dropDestination(for: String.self) { items, _ in
             let songs = library.songs(SongDrag.ids(from: items))
@@ -501,6 +510,61 @@ struct QueueView: View {
             library.showToast(songs.count == 1 ? "Added to queue" : "Added \(songs.count) songs to queue")
             return true
         }
+    }
+
+    private func header<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        HStack { content() }
+            .font(.headline)
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 8)
+            .queueRowStyle()
+    }
+}
+
+private extension View {
+    /// A side panel queue row: no list background, separators or default insets.
+    func queueRowStyle() -> some View {
+        listRowBackground(Color.clear)
+            .listRowSeparator(.hidden)
+            .listRowInsets(EdgeInsets(top: 1, leading: 12, bottom: 1, trailing: 12))
+    }
+}
+
+/// Describe what you want to hear; Up Next is replaced with it and keeps going.
+struct MoodField: View {
+    @Environment(Player.self) private var player
+    var placeholder = "Describe a mood, like \"trance classics\""
+    @State private var text = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: "sparkles").foregroundStyle(.secondary)
+                TextField(placeholder, text: $text)
+                    .textFieldStyle(.plain)
+                    .onSubmit {
+                        player.startMood(text)
+                        text = ""
+                    }
+                if player.moodLoading { ProgressView().controlSize(.small).transition(.opacity) }
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 7))
+            if let mood = player.mood {
+                HStack(spacing: 4) {
+                    Text("Mood: \(mood)").lineLimit(1)
+                    Button { player.endMood() } label: { Image(systemName: "xmark.circle.fill") }
+                        .buttonStyle(.borderless)
+                        .help("Stop the mood; Up Next goes back to the radio")
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+        .animation(.snappy, value: player.mood)
+        .animation(.snappy, value: player.moodLoading)
     }
 }
 

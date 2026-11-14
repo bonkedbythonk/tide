@@ -86,6 +86,15 @@ enum SleepTimer: String, CaseIterable, Identifiable {
     var autoplay = Prefs.bool("autoplay", true) { didSet { Prefs.set(autoplay, "autoplay") } }
     /// Fetches the radio; set by the app, which owns the YouTube client.
     @ObservationIgnored var radio: ((Song) async -> [Song])?
+    /// What you asked the mood box for; while set, Up Next keeps filling from it
+    /// instead of the radio, whatever the Autoplay setting.
+    private(set) var mood: String?
+    private(set) var moodLoading = false
+    /// Finds songs for a mood; set by the app, which owns the YouTube client.
+    @ObservationIgnored var moodSongs: ((String) async -> [Song])?
+    @ObservationIgnored private var moodPool: [Song] = []
+    /// Bumped by every new or ended mood, so a slow search for an old one is dropped.
+    @ObservationIgnored private var moodGeneration = 0
     /// The library's latest copy of a song, for queue entries saved before YouTube's
     /// track type was known.
     @ObservationIgnored var latest: ((String) -> Song?)?
@@ -728,13 +737,78 @@ enum SleepTimer: String, CaseIterable, Identifiable {
 
     /// On the last song or the one before it, adds YouTube's radio for it to the queue.
     private func extendWithRadioIfNeeded() {
-        guard autoplay, repeatMode == .off, index >= queue.count - 2, let seed = current else { return }
+        guard repeatMode == .off, index >= queue.count - 2, let seed = current else { return }
+        if mood != nil { return extendMood() }
+        guard autoplay else { return }
         appendRadio(after: seed)
+    }
+
+    // MARK: Mood
+
+    /// Replaces Up Next with songs for `prompt` and keeps it going from there.
+    /// The song playing keeps playing; with nothing playing (or only last session's
+    /// song, not loaded yet), the mood's first song starts.
+    func startMood(_ prompt: String) {
+        let prompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !prompt.isEmpty, let moodSongs else { return }
+        moodGeneration += 1
+        let generation = moodGeneration
+        moodLoading = true
+        Task { @MainActor [weak self] in
+            let songs = await moodSongs(prompt)
+            guard let self, self.moodGeneration == generation else { return }
+            self.moodLoading = false
+            guard !songs.isEmpty else { return }
+            let batch = Array(songs.prefix(10))
+            if self.current == nil || self.needsLoad {
+                self.play(batch[0], in: batch)
+            } else {
+                self.unshuffledUpNext = nil
+                withAnimation(.snappy) {
+                    self.queue = Array(self.queue[...self.index])
+                    self.appendDeduped(batch)
+                }
+            }
+            withAnimation(.snappy) { self.mood = prompt }
+            self.moodGeneration = generation
+            self.moodPool = Array(songs.dropFirst(10))
+            await self.resolver.prepare(self.upNext.prefix(2).map(\.id), video: self.videoMode, maxHeight: self.videoQuality)
+        }
+    }
+
+    /// Up Next goes back to the radio once the mood's songs run out.
+    func endMood() {
+        withAnimation(.snappy) {
+            mood = nil
+            moodLoading = false
+        }
+        moodPool = []
+        moodGeneration += 1
+    }
+
+    /// Tops up Up Next from the mood's songs; once those are used up, from the
+    /// radio of a song the mood played, which stays close to it.
+    private func extendMood() {
+        let before = queue.count
+        while queue.count == before, !moodPool.isEmpty {
+            appendDeduped(Array(moodPool.prefix(10)))
+            moodPool.removeFirst(min(10, moodPool.count))
+        }
+        if queue.count > before { return }
+        guard let radio, let seed = queue.suffix(10).randomElement() else { return }
+        let generation = moodGeneration
+        Task { @MainActor [weak self] in
+            let songs = await radio(seed)
+            guard let self, self.moodGeneration == generation else { return }
+            self.appendDeduped(songs)
+            await self.resolver.prepare(self.upNext.prefix(2).map(\.id), video: self.videoMode, maxHeight: self.videoQuality)
+        }
     }
 
     /// Plays a song followed by its radio, as YouTube Music does for songs on Home.
     /// The song already playing keeps playing; only what comes after it changes.
     func playRadio(_ song: Song) {
+        endMood()
         if song.id == current?.id, !needsLoad {
             queue = [song]
             index = 0
@@ -922,6 +996,7 @@ enum SleepTimer: String, CaseIterable, Identifiable {
     func play(_ song: Song, in list: [Song], at start: TimeInterval = 0) {
         var list = list.isEmpty ? [song] : list
         var first = list.firstIndex(of: song) ?? 0
+        endMood()
         unshuffledUpNext = nil
         if shuffle {
             let rest = list.enumerated().filter { $0.offset != first }.map(\.element)
@@ -1116,6 +1191,7 @@ enum SleepTimer: String, CaseIterable, Identifiable {
         guard queue.indices.contains(index) else { return }
         queue = [queue[index]]
         radioSeed = current?.id
+        endMood()
     }
 
     /// Squared, so the slider's lower half isn't all "loud" (Pear's exponential-volume).

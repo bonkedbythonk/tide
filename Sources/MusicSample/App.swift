@@ -238,6 +238,11 @@ struct RootView: View {
             swipe.install(router: router, player: player)
             KeyboardShortcuts.install(player: player, router: router)
             player.radio = { [library] in await library.radio(after: $0) }
+            player.moodSongs = { [library] prompt in
+                let songs = await library.moodSongs(prompt)
+                if songs.isEmpty { library.showToast("Found nothing for \"\(prompt)\"") }
+                return songs
+            }
             player.latest = { [library] in library.song($0) }
             player.reportPlay = { [library] in await library.client.addToHistory($0.id) }
             if Demo.isOn { Demo.open(UserDefaults.standard.string(forKey: "demoScreen"), router: router) }

@@ -24,6 +24,8 @@ struct HomeView: View {
                 }
                 .padding(.horizontal, 24)
 
+                MoodField(placeholder: "What do you want to hear?")
+                    .padding(.horizontal, 24)
 
                 ForEach(shelves) { shelf in
                     VStack(alignment: .leading, spacing: 12) {

@@ -260,6 +260,11 @@ struct TransitionPlan: Codable {
     /// Seconds (own time) the outgoing song keeps sounding after `fade`, fading out
     /// with its own closing ring-out under the next song, which is fully up by then.
     var ringOut: TimeInterval = 0
+    /// The outgoing song thins out (a stripped-down outro) where the mix runs, so the
+    /// new song can come up full underneath it. A song that stays full to its end
+    /// gets a shorter mix with the new song kept down until the swap: two full
+    /// arrangements layered for long crowd each other even on the beat.
+    var layered = false
 }
 
 extension BeatAnalysis {
@@ -464,19 +469,21 @@ enum TransitionPlanner {
         let outro = outroStart(tail, last: last)
 
         // Prevent transition from invading the vocal chorus or main body of Song A:
-        let maxMixBeats: Int
+        var maxMixBeats: Int
         if let outro {
             // Outro detected where energy drops: constrain mix to the true outro section
             maxMixBeats = max(16, min(64, ((last - outro + 4) / 16) * 16))
         } else {
             maxMixBeats = 48
         }
+        let layered = thinsOut(tail, last: last)
+        if !layered { maxMixBeats = min(maxMixBeats, 32) }
 
         var candidates: [(startA: Int, count: Int, swapBeats: Int)] = []
 
         // The next song's drop lands where the outgoing song's body ends, and the bass
         // swaps there: the old song carries the low end until the new one takes it.
-        if let drop, drop >= 8, drop <= 64 {
+        if let drop, drop >= 8, drop <= (layered ? 64 : maxMixBeats) {
             candidates.append((startA: last - drop, count: drop, swapBeats: drop))
         }
 
@@ -518,11 +525,12 @@ enum TransitionPlanner {
             let fade = endA - outAt
             guard fade >= 6 && fade <= 35 else { continue }
 
-            let plan = TransitionPlan(outAt: outAt, inAt: inAt, fade: fade, onBeat: true,
+            var plan = TransitionPlan(outAt: outAt, inAt: inAt, fade: fade, onBeat: true,
                                       matched: true, speed: 1 / rateA, incomingSpeed: rateB, beat: gridA.period,
                                       outro: outro.map { tail.beats[$0] },
                                       drop: drop.map { head.beats[first + $0] },
                                       swapDelay: Double(cand.swapBeats) * gridA.period)
+            plan.layered = layered
             if let voice = tail.voiceEnd, outAt < voice - 0.5 {
                 if !underVoiceIsDrop {
                     underVoice = plan
@@ -646,6 +654,21 @@ enum TransitionPlanner {
         // True silence is below -48 dBFS, or 38 dB below loud passages.
         // This ensures vocal outros, quiet acoustic instruments, and decay tails are never treated as silence.
         return min(-48.0, loud - 38.0)
+    }
+
+    /// Whether the song's last 32 beats before `last` are clearly lighter (3 dB, typical
+    /// level) than the 16 s before them: a stripped-down outro rather than full to the end.
+    static func thinsOut(_ a: BeatAnalysis, last: Int) -> Bool {
+        guard a.loudnessStep > 0, last >= 32 else { return false }
+        func median(_ lo: TimeInterval, _ hi: TimeInterval) -> Float? {
+            let i = max(0, Int((lo - a.start) / a.loudnessStep)), j = min(a.loudness.count, Int((hi - a.start) / a.loudnessStep))
+            guard j - i > 10 else { return nil }
+            let v = a.loudness[i..<j].sorted()
+            return v[v.count / 2]
+        }
+        let from = a.beats[last - 32]
+        guard let before = median(from - 16, from), let outro = median(from, a.beats[last]) else { return false }
+        return before - outro >= 3
     }
 
     /// Whether the song keeps its low end from `from` to `to`: the typical (median) bass

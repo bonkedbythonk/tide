@@ -630,7 +630,7 @@ enum SleepTimer: String, CaseIterable, Identifiable {
             ? min(0.8, (plan.swapDelay.map { $0 * ownTime } ?? seconds / 2) / seconds) : 0
         // Long mixes are heard as long: the new song rises early enough to be noticed
         // under the old one, and the old one trails off slowly after the swap.
-        let long = hold > 0 && seconds >= 12
+        let long = hold > 0 && seconds >= 12 && plan.layered
         if seconds <= 0.05 {
             fadeLevel = 1.0
             applyVolume()

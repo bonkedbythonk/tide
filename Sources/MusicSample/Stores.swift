@@ -244,6 +244,9 @@ enum SleepTimer: String, CaseIterable, Identifiable {
     /// Between loadfile and mpv's "file loaded", position and length reports still
     /// belong to the previous track; they're ignored so the bar doesn't jump.
     @ObservationIgnored private var awaitingFile = false
+    /// A seek asked for while the song was still loading (mpv ignores it then);
+    /// applied once the file is loaded.
+    @ObservationIgnored private var pendingSeek: TimeInterval?
     /// mpv's real position, kept up to date even while another load is resolving.
     @ObservationIgnored private var livePosition: TimeInterval = 0 {
         didSet {
@@ -306,6 +309,10 @@ enum SleepTimer: String, CaseIterable, Identifiable {
             }
             guard e === self.engine else { return }
             self.awaitingFile = false
+            if let t = self.pendingSeek {
+                self.pendingSeek = nil
+                e.seek(t)
+            }
         }
         e.onVideoAspect = { [weak self, unowned e] aspect in
             // Ignore tiny changes so the stage never jitters.
@@ -944,6 +951,7 @@ enum SleepTimer: String, CaseIterable, Identifiable {
                 }
                 self.fadeInWhenPlaying = fadeIn
                 self.awaitingFile = true
+        pendingSeek = nil
                 let begin = followLive ? self.livePosition + 0.2 : start
                 self.position = begin
                 if !followLive { self.engine.resetTransition() }
@@ -1155,7 +1163,7 @@ enum SleepTimer: String, CaseIterable, Identifiable {
         finishCrossfade()
         position = time
         livePosition = time
-        engine.seek(time)
+        if isLoading || awaitingFile { pendingSeek = time } else { engine.seek(time) }
         publishNowPlaying()
     }
 

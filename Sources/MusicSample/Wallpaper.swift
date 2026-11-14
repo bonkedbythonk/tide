@@ -396,6 +396,16 @@ struct WindowButtonsLowered: NSViewRepresentable {
                     DispatchQueue.main.async { self?.place() }
                 })
             }
+            // A title change (switching pages) lays the title bar out again without any
+            // window notification, so also catch AppKit moving the buttons themselves.
+            for t in Self.types {
+                guard let b = window.standardWindowButton(t) else { continue }
+                b.postsFrameChangedNotifications = true
+                observers.append(NotificationCenter.default.addObserver(forName: NSView.frameDidChangeNotification, object: b, queue: .main) { [weak self] _ in
+                    // After AppKit's layout pass, which would undo a move made during it.
+                    DispatchQueue.main.async { self?.place() }
+                })
+            }
         }
 
         func place() {
@@ -405,7 +415,8 @@ struct WindowButtonsLowered: NSViewRepresentable {
                 if origins[t] == nil { origins[t] = b.frame.origin }
                 // Centred 24pt below the window's top edge, 8pt right of where AppKit puts it.
                 let y = sup.isFlipped ? 24 - b.frame.height / 2 : sup.bounds.height - 24 - b.frame.height / 2
-                b.setFrameOrigin(NSPoint(x: origins[t]!.x + 8, y: y))
+                let target = NSPoint(x: origins[t]!.x + 8, y: y)
+                if b.frame.origin != target { b.setFrameOrigin(target) }
             }
         }
 

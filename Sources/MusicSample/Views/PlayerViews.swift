@@ -546,12 +546,22 @@ struct MoodField: View {
                         player.startMood(text)
                         text = ""
                     }
-                if player.moodLoading { ProgressView().controlSize(.small).transition(.opacity) }
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 6)
             .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 7))
-            if let mood = player.mood {
+            if let pending = player.moodLoading {
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.mini)
+                    Text("Finding songs for \"\(pending)\"...").lineLimit(1)
+                    Button { player.endMood() } label: { Image(systemName: "xmark.circle.fill") }
+                        .buttonStyle(.borderless)
+                        .help("Cancel")
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            } else if let mood = player.mood {
                 HStack(spacing: 4) {
                     Text("Mood: \(mood)").lineLimit(1)
                     Button { player.endMood() } label: { Image(systemName: "xmark.circle.fill") }

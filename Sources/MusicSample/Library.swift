@@ -180,9 +180,11 @@ import SwiftUI
     }
 
     /// Songs for a mood. Artists the request names lead: three of theirs to every one
-    /// of the rest. The rest is half your own listening, half searches.
-    /// Your side: songs from Home, history and likes that fit. The search side: the mood's searches, with the top two playlists of a
-    /// playlist search opened. Within each side the sources take turns, so no one
+    /// of the rest. The rest is two search results to one of your own songs: YouTube's
+    /// search matches a request far better than the on-device model judging your
+    /// songs by name, which still picks a few when none really fit.
+    /// Your side: songs from Home, history and likes that fit. The search side: the
+    /// mood's searches, with the top two playlists of a playlist search opened. Within each side the sources take turns, so no one
     /// search or playlist fills the start. Hour-long compilations are left out.
     @MainActor
     func moodSongs(_ prompt: String) async -> [Song] {
@@ -212,11 +214,13 @@ import SwiftUI
             for await lists in group { all += lists }
             return all
         }
-        var personal = Self.takingTurns(await mine), searched = Self.takingTurns(found)
+        var personal = Self.takingTurns(await mine)
+        var searched = Self.takingTurns(found.map { $0.filter { !Self.isNotMusic($0.title) } })
         var rest: [Song] = []
         while !personal.isEmpty || !searched.isEmpty {
+            rest += searched.prefix(2)
+            searched.removeFirst(min(2, searched.count))
             if !personal.isEmpty { rest.append(personal.removeFirst()) }
-            if !searched.isEmpty { rest.append(searched.removeFirst()) }
         }
         var featured = Self.takingTurns(await named)
         var mixed: [Song] = []
@@ -256,11 +260,21 @@ import SwiftUI
     /// judged to fit brings a whole radio of the wrong kind.
     @MainActor
     private func personalMoodSongs(_ prompt: String) async -> [[Song]] {
-        let history = await page(Self.historyID)?.songs ?? []
+        // Only history's first page (the latest days): the full history is many pages.
+        let history = (try? await client.browse(Self.historyID)).map { YTParse.page($0, id: Self.historyID).data.songs }
+            ?? pages[Self.historyID]?.songs ?? []
         let liked = pages[Self.likedID]?.songs ?? []
         var seen = Set<String>()
         let candidates = (home.flatMap(\.songs) + history.prefix(100) + liked.prefix(100)).filter { seen.insert($0.id).inserted }
         return [await MoodPlanner.fitting(candidates, prompt: prompt)]
+    }
+
+    /// Search results that are about music rather than music: tutorials, sample packs,
+    /// reactions. Video searches for a style ("trance loops") turn these up.
+    private static func isNotMusic(_ title: String) -> Bool {
+        // Only phrases no song title uses: "How to Save a Life" and "Chain Reaction" stay.
+        title.range(of: #"\b(tutorials?|sample packs?|basslines|reacts? to|reaction video|unboxing|having fun with)\b"#,
+                    options: [.regularExpression, .caseInsensitive]) != nil
     }
 
     /// Shuffles each list, then takes one from each in turn.

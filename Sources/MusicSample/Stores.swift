@@ -89,7 +89,8 @@ enum SleepTimer: String, CaseIterable, Identifiable {
     /// What you asked the mood box for; while set, Up Next keeps filling from it
     /// instead of the radio, whatever the Autoplay setting.
     private(set) var mood: String?
-    private(set) var moodLoading = false
+    /// The request being searched for, shown until its songs arrive.
+    private(set) var moodLoading: String?
     /// Finds songs for a mood; set by the app, which owns the YouTube client.
     @ObservationIgnored var moodSongs: ((String) async -> [Song])?
     @ObservationIgnored private var moodPool: [Song] = []
@@ -737,27 +738,28 @@ enum SleepTimer: String, CaseIterable, Identifiable {
 
     /// On the last song or the one before it, adds YouTube's radio for it to the queue.
     private func extendWithRadioIfNeeded() {
-        guard repeatMode == .off, index >= queue.count - 2, let seed = current else { return }
-        if mood != nil { return extendMood() }
-        guard autoplay else { return }
+        guard index >= queue.count - 2, let seed = current else { return }
+        // A mood keeps going under Repeat All too; otherwise it wraps back to old songs.
+        if mood != nil, repeatMode != .one { return extendMood() }
+        guard autoplay, repeatMode == .off else { return }
         appendRadio(after: seed)
     }
 
     // MARK: Mood
 
     /// Replaces Up Next with songs for `prompt` and keeps it going from there.
-    /// The song playing keeps playing; with nothing playing (or only last session's
-    /// song, not loaded yet), the mood's first song starts.
+    /// The song playing keeps playing. With nothing playing (stopped, paused, or only
+    /// last session's song, not loaded yet), the mood's first song starts.
     func startMood(_ prompt: String) {
         let prompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !prompt.isEmpty, let moodSongs else { return }
         moodGeneration += 1
         let generation = moodGeneration
-        moodLoading = true
+        withAnimation(.snappy) { moodLoading = prompt }
         Task { @MainActor [weak self] in
             let songs = await moodSongs(prompt)
             guard let self, self.moodGeneration == generation else { return }
-            self.moodLoading = false
+            withAnimation(.snappy) { self.moodLoading = nil }
             guard !songs.isEmpty else { return }
             let batch = Array(songs.prefix(10))
             if self.current == nil || self.needsLoad {
@@ -768,10 +770,12 @@ enum SleepTimer: String, CaseIterable, Identifiable {
                     self.queue = Array(self.queue[...self.index])
                     self.appendDeduped(batch)
                 }
+                if !self.isPlaying, !self.isLoading, !self.upNext.isEmpty { self.jump(to: self.index + 1) }
             }
             withAnimation(.snappy) { self.mood = prompt }
             self.moodGeneration = generation
             self.moodPool = Array(songs.dropFirst(10))
+            self.publishNowPlaying()
             await self.resolver.prepare(self.upNext.prefix(2).map(\.id), video: self.videoMode, maxHeight: self.videoQuality)
         }
     }
@@ -780,7 +784,7 @@ enum SleepTimer: String, CaseIterable, Identifiable {
     func endMood() {
         withAnimation(.snappy) {
             mood = nil
-            moodLoading = false
+            moodLoading = nil
         }
         moodPool = []
         moodGeneration += 1
@@ -794,13 +798,14 @@ enum SleepTimer: String, CaseIterable, Identifiable {
             appendDeduped(Array(moodPool.prefix(10)))
             moodPool.removeFirst(min(10, moodPool.count))
         }
-        if queue.count > before { return }
+        if queue.count > before { return publishNowPlaying() }
         guard let radio, let seed = queue.suffix(10).randomElement() else { return }
         let generation = moodGeneration
         Task { @MainActor [weak self] in
             let songs = await radio(seed)
             guard let self, self.moodGeneration == generation else { return }
             self.appendDeduped(songs)
+            self.publishNowPlaying()
             await self.resolver.prepare(self.upNext.prefix(2).map(\.id), video: self.videoMode, maxHeight: self.videoQuality)
         }
     }

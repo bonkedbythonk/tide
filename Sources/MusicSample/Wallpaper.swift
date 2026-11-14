@@ -376,22 +376,59 @@ enum PanelStyle {
     static let barHeight: CGFloat = 66
 }
 
-/// An empty, invisible toolbar makes the title bar taller, which lowers the
-/// window buttons into the sidebar panel instead of hugging the top edge.
+/// Moves the window buttons down and right, into the sidebar panel's corner instead of
+/// over its curved edge. AppKit lays the title bar out again on resize, focus and
+/// fullscreen changes, so the move is redone then; leaving the wallpaper puts them back.
 struct WindowButtonsLowered: NSViewRepresentable {
+    final class Coordinator {
+        weak var window: NSWindow?
+        var origins: [NSWindow.ButtonType: NSPoint] = [:]
+        var observers: [Any] = []
+        static let types: [NSWindow.ButtonType] = [.closeButton, .miniaturizeButton, .zoomButton]
+
+        func attach(_ window: NSWindow) {
+            self.window = window
+            place()
+            for name in [NSWindow.didResizeNotification, NSWindow.didEndLiveResizeNotification,
+                         NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification,
+                         NSWindow.didExitFullScreenNotification] {
+                observers.append(NotificationCenter.default.addObserver(forName: name, object: window, queue: .main) { [weak self] _ in
+                    DispatchQueue.main.async { self?.place() }
+                })
+            }
+        }
+
+        func place() {
+            guard let window else { return }
+            for t in Self.types {
+                guard let b = window.standardWindowButton(t), let sup = b.superview else { continue }
+                if origins[t] == nil { origins[t] = b.frame.origin }
+                // Centred 24pt below the window's top edge, 8pt right of where AppKit puts it.
+                let y = sup.isFlipped ? 24 - b.frame.height / 2 : sup.bounds.height - 24 - b.frame.height / 2
+                b.setFrameOrigin(NSPoint(x: origins[t]!.x + 8, y: y))
+            }
+        }
+
+        func detach() {
+            observers.forEach(NotificationCenter.default.removeObserver)
+            observers = []
+            for (t, o) in origins { window?.standardWindowButton(t)?.setFrameOrigin(o) }
+        }
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
     func makeNSView(context: Context) -> NSView {
         let view = NSView()
         DispatchQueue.main.async {
-            guard let window = view.window, window.toolbar == nil else { return }
-            window.toolbar = NSToolbar(identifier: "tide-window")
-            window.toolbarStyle = .unified
-            window.titleVisibility = .hidden
-            window.titlebarAppearsTransparent = true
+            if let window = view.window { context.coordinator.attach(window) }
         }
         return view
     }
 
     func updateNSView(_ view: NSView, context: Context) {}
+
+    static func dismantleNSView(_ view: NSView, coordinator: Coordinator) { coordinator.detach() }
 }
 
 /// One wallpaper behind the whole window, darkened everywhere except where
@@ -519,3 +556,4 @@ struct WallpaperSettings: View {
         }
     }
 }
+

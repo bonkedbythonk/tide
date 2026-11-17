@@ -107,6 +107,7 @@ struct NowPlayingInfo: View {
 /// One line of text that, when it doesn't fit, slides over to show the rest, rests,
 /// and slides back.
 struct MarqueeText: View {
+    @Environment(Player.self) private var player
     let text: String
     @State private var width: CGFloat = 0
     @State private var full: CGFloat = 0
@@ -122,9 +123,11 @@ struct MarqueeText: View {
                     .offset(x: slid ? -overflow : 0)
             }
             .clipped()
-            .task(id: "\(text)\(overflow)") {
+            // Still while the window is hidden: each frame of the slide redrew the
+            // whole window for nobody.
+            .task(id: "\(text)\(overflow)\(player.windowHidden)") {
                 slid = false
-                guard overflow > 1 else { return }
+                guard overflow > 1, !player.windowHidden else { return }
                 let seconds = Double(overflow) / 30
                 while !Task.isCancelled {
                     try? await Task.sleep(for: .seconds(2.5))
@@ -192,7 +195,9 @@ private struct MixTitles: View {
 struct TransportControls: View {
     @Environment(\.barAccent) private var accent
     @Environment(\.mixGlow) private var glow
+    @Environment(\.displayScale) private var displayScale
     @Environment(Player.self) private var player
+    @State private var barWidth: CGFloat = 0
 
     var body: some View {
         // Songs from Home arrive without a length; show none until mpv knows it.
@@ -222,20 +227,63 @@ struct TransportControls: View {
             .buttonStyle(.plain)
             HStack(spacing: 8) {
                 Text(known ? formatTime(shown) : "–:––").frame(width: 40, alignment: .trailing)
-                TimelineView(.animation(paused: !player.isPlaying && player.mix == nil)) { context in
+                // Paused while the window is covered or minimized: nobody sees it redraw.
+                // Outside a mix the head creeps a pixel every few seconds, so redraw only
+                // as often as it moves a quarter of a pixel; a mix's glow gets every frame.
+                let step = player.mix == nil && barWidth > 0 ? duration / (barWidth * displayScale * 4) : nil
+                TimelineView(.animation(minimumInterval: step,
+                                        paused: player.windowHidden || (!player.isPlaying && player.mix == nil))) { context in
                     let now = player.scrubPosition ?? player.position(at: context.date)
                     CometBar(value: known ? min(now, duration) : 0, duration: duration,
                              glow: glow, intensity: player.mix?.swell(at: context.date) ?? 0,
                              mixAt: player.upcomingMix.map { $0 / duration },
                              enabled: known, seek: player.seek)
                 }
+                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { barWidth = $0 }
                 Text(known ? formatTime(duration) : "–:––").frame(width: 40, alignment: .leading)
             }
+            .background(WindowVisibility { player.windowHidden = !$0 })
             .font(.caption)
             .monospacedDigit()
             .foregroundStyle(.secondary)
         }
     }
+}
+
+/// Reports whether the hosting window is on screen and not fully covered or minimized.
+private struct WindowVisibility: NSViewRepresentable {
+    let onChange: (Bool) -> Void
+
+    final class Tracker: NSView {
+        var onChange: (Bool) -> Void = { _ in }
+        private var observer: Any?
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if let observer { NotificationCenter.default.removeObserver(observer) }
+            observer = nil
+            guard let window else { return }
+            observer = NotificationCenter.default.addObserver(
+                forName: NSWindow.didChangeOcclusionStateNotification, object: window, queue: .main
+            ) { [weak self] _ in self?.report() }
+            report()
+        }
+
+        private func report() {
+            let visible = window?.occlusionState.contains(.visible) ?? false
+            DispatchQueue.main.async { self.onChange(visible) }
+        }
+
+        deinit { if let observer { NotificationCenter.default.removeObserver(observer) } }
+    }
+
+    func makeNSView(context: Context) -> Tracker {
+        let view = Tracker()
+        view.onChange = onChange
+        return view
+    }
+
+    func updateNSView(_ view: Tracker, context: Context) { view.onChange = onChange }
 }
 
 /// The progress bar: a thin track with a white head. A small mark shows where the

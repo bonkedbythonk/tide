@@ -1,0 +1,358 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		10342EFD4C368013AC7A75A0 /* IdleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF5B7EA2F69489FE1794F078 /* IdleView.swift */; };
+		2330CAB409937C586FA3CF29 /* NowPlayingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EE34F3E93740A6D583676A15 /* NowPlayingView.swift */; };
+		27B364D27D691E39BE076886 /* MacLink.swift in Sources */ = {isa = PBXBuildFile; fileRef = 248532D9F395F580C6228864 /* MacLink.swift */; };
+		5108AEB60E37C0C8855E0FE3 /* TVProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = 263DD3266EA3FADA1CD10898 /* TVProtocol.swift */; };
+		5293FA8C7E17A796D6D0FB9A /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 4B2C23295BCB38671357C8E1 /* Assets.xcassets */; };
+		5444B7789381790BF2A6428D /* TVPlayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = D65BEAFB0EE59B9DD2B66A0A /* TVPlayer.swift */; };
+		597CB297BF47D7AEE052B4CB /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = E43B526056216607052422E5 /* Models.swift */; };
+		87EA73CFFCAD1553FD3CC64A /* TideTVApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A433ACE3DF40FAE5EAAA6BA9 /* TideTVApp.swift */; };
+		8E7D0C38DA3E8C175091DA37 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = A22E605FD8D1B57FA972C860 /* Theme.swift */; };
+		BBA42C7B9C581E705FBFD462 /* logo.png in Resources */ = {isa = PBXBuildFile; fileRef = 104EB0D1AE85EE156B2DC6D7 /* logo.png */; };
+		E8557CC583834992C1D50BFB /* VideoViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2C18786C5469CF8B7218761 /* VideoViews.swift */; };
+		EB39AE4839ACBD55D83E103C /* BrowseViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C3BD9058A8684C32CFB93A6 /* BrowseViews.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		104EB0D1AE85EE156B2DC6D7 /* logo.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = logo.png; sourceTree = "<group>"; };
+		248532D9F395F580C6228864 /* MacLink.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacLink.swift; sourceTree = "<group>"; };
+		263DD3266EA3FADA1CD10898 /* TVProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TVProtocol.swift; sourceTree = "<group>"; };
+		4B2C23295BCB38671357C8E1 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		5C3BD9058A8684C32CFB93A6 /* BrowseViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowseViews.swift; sourceTree = "<group>"; };
+		85865E1C1A322F72FCA3DB9B /* TideTV.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = TideTV.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A22E605FD8D1B57FA972C860 /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
+		A433ACE3DF40FAE5EAAA6BA9 /* TideTVApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TideTVApp.swift; sourceTree = "<group>"; };
+		BF5B7EA2F69489FE1794F078 /* IdleView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IdleView.swift; sourceTree = "<group>"; };
+		C2C18786C5469CF8B7218761 /* VideoViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoViews.swift; sourceTree = "<group>"; };
+		D65BEAFB0EE59B9DD2B66A0A /* TVPlayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TVPlayer.swift; sourceTree = "<group>"; };
+		E43B526056216607052422E5 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		EE34F3E93740A6D583676A15 /* NowPlayingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NowPlayingView.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXGroup section */
+		0BF606643C6B4A5FCE9E6C58 /* MusicSample */ = {
+			isa = PBXGroup;
+			children = (
+				E43B526056216607052422E5 /* Models.swift */,
+				263DD3266EA3FADA1CD10898 /* TVProtocol.swift */,
+			);
+			name = MusicSample;
+			path = ../Sources/MusicSample;
+			sourceTree = "<group>";
+		};
+		3A2E6CC9FA2ADAD5AA775231 /* Sources */ = {
+			isa = PBXGroup;
+			children = (
+				5C3BD9058A8684C32CFB93A6 /* BrowseViews.swift */,
+				BF5B7EA2F69489FE1794F078 /* IdleView.swift */,
+				248532D9F395F580C6228864 /* MacLink.swift */,
+				EE34F3E93740A6D583676A15 /* NowPlayingView.swift */,
+				A22E605FD8D1B57FA972C860 /* Theme.swift */,
+				A433ACE3DF40FAE5EAAA6BA9 /* TideTVApp.swift */,
+				D65BEAFB0EE59B9DD2B66A0A /* TVPlayer.swift */,
+				C2C18786C5469CF8B7218761 /* VideoViews.swift */,
+			);
+			path = Sources;
+			sourceTree = "<group>";
+		};
+		7C28FA1DF9FBC29D4A4A2C8A /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				85865E1C1A322F72FCA3DB9B /* TideTV.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		B04D1F7FEC65F0C3739F8DA0 = {
+			isa = PBXGroup;
+			children = (
+				4B2C23295BCB38671357C8E1 /* Assets.xcassets */,
+				CFF7D75A1948F1E2703CCDBE /* Branding */,
+				0BF606643C6B4A5FCE9E6C58 /* MusicSample */,
+				3A2E6CC9FA2ADAD5AA775231 /* Sources */,
+				7C28FA1DF9FBC29D4A4A2C8A /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		CFF7D75A1948F1E2703CCDBE /* Branding */ = {
+			isa = PBXGroup;
+			children = (
+				104EB0D1AE85EE156B2DC6D7 /* logo.png */,
+			);
+			name = Branding;
+			path = ../Branding;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		3CE7ECD0CA387B147D39228B /* TideTV */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 1E1F73504FB18DBAE6D5926E /* Build configuration list for PBXNativeTarget "TideTV" */;
+			buildPhases = (
+				4EB8528BE2E18508F19D5F4A /* Sources */,
+				891C4219BD7075072007246C /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = TideTV;
+			packageProductDependencies = (
+			);
+			productName = TideTV;
+			productReference = 85865E1C1A322F72FCA3DB9B /* TideTV.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		C0F17429798EBB149607AFBD /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					3CE7ECD0CA387B147D39228B = {
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = B7A50A4CA49028F5E74C18DD /* Build configuration list for PBXProject "TideTV" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = B04D1F7FEC65F0C3739F8DA0;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 7C28FA1DF9FBC29D4A4A2C8A /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				3CE7ECD0CA387B147D39228B /* TideTV */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		891C4219BD7075072007246C /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				5293FA8C7E17A796D6D0FB9A /* Assets.xcassets in Resources */,
+				BBA42C7B9C581E705FBFD462 /* logo.png in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		4EB8528BE2E18508F19D5F4A /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				EB39AE4839ACBD55D83E103C /* BrowseViews.swift in Sources */,
+				10342EFD4C368013AC7A75A0 /* IdleView.swift in Sources */,
+				27B364D27D691E39BE076886 /* MacLink.swift in Sources */,
+				597CB297BF47D7AEE052B4CB /* Models.swift in Sources */,
+				2330CAB409937C586FA3CF29 /* NowPlayingView.swift in Sources */,
+				5444B7789381790BF2A6428D /* TVPlayer.swift in Sources */,
+				5108AEB60E37C0C8855E0FE3 /* TVProtocol.swift in Sources */,
+				8E7D0C38DA3E8C175091DA37 /* Theme.swift in Sources */,
+				87EA73CFFCAD1553FD3CC64A /* TideTVApp.swift in Sources */,
+				E8557CC583834992C1D50BFB /* VideoViews.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		3F4EF3C7B2D16348F412F323 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = "App Icon & Top Shelf Image";
+				ASSETCATALOG_COMPILER_LAUNCHIMAGE_NAME = LaunchImage;
+				CODE_SIGN_STYLE = Automatic;
+				INFOPLIST_FILE = Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = local.tide.tv;
+				SDKROOT = appletvos;
+				TARGETED_DEVICE_FAMILY = 3;
+			};
+			name = Debug;
+		};
+		4906A8A5B1044BE7A3E99476 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = appletvos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+				TVOS_DEPLOYMENT_TARGET = 18.0;
+			};
+			name = Debug;
+		};
+		C36701DD8C9F1E26A4627CF1 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = "App Icon & Top Shelf Image";
+				ASSETCATALOG_COMPILER_LAUNCHIMAGE_NAME = LaunchImage;
+				CODE_SIGN_STYLE = Automatic;
+				INFOPLIST_FILE = Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = local.tide.tv;
+				SDKROOT = appletvos;
+				TARGETED_DEVICE_FAMILY = 3;
+			};
+			name = Release;
+		};
+		FE75CD517485E252E8F958AD /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = appletvos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+				TVOS_DEPLOYMENT_TARGET = 18.0;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		1E1F73504FB18DBAE6D5926E /* Build configuration list for PBXNativeTarget "TideTV" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				3F4EF3C7B2D16348F412F323 /* Debug */,
+				C36701DD8C9F1E26A4627CF1 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		B7A50A4CA49028F5E74C18DD /* Build configuration list for PBXProject "TideTV" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				4906A8A5B1044BE7A3E99476 /* Debug */,
+				FE75CD517485E252E8F958AD /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = C0F17429798EBB149607AFBD /* Project object */;
+}

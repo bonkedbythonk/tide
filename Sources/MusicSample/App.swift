@@ -9,6 +9,8 @@ struct MusicSampleApp: App {
     @State private var home = HomeConfig()
     @State private var lyrics = LyricsStore()
     @State private var wallpaper = WallpaperStore()
+    @State private var spotify = SpotifySync()
+    @State private var tvServer = TVServer()
 
     /// ⌘1–⌘9: the fixed sections, then your playlists in sidebar order.
     private var goTargets: [(String, Route)] {
@@ -31,11 +33,18 @@ struct MusicSampleApp: App {
                 .environment(home)
                 .environment(lyrics)
                 .environment(wallpaper)
+                .environment(spotify)
+                .environment(tvServer)
                 .frame(minWidth: 1000, minHeight: 640)
+                // Once the library is in, so the sync can read your playlists.
+                .task(id: library.state == .ready) {
+                    if library.state == .ready { await spotify.start(library) }
+                }
                 .onAppear {
                     NSApp.activate(ignoringOtherApps: true)
                     NowPlayingCenter.lyrics = lyrics
                     NowPlayingCenter.library = library
+                    tvServer.attach(library: library, lyrics: lyrics, player: player)
                 }
         }
         .defaultSize(width: 1280, height: 820)

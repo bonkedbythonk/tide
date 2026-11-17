@@ -24,6 +24,8 @@ cat > $app/Contents/Info.plist <<EOF
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>LSMinimumSystemVersion</key><string>15.0</string>
 <key>NSHighResolutionCapable</key><true/>
+<key>NSLocalNetworkUsageDescription</key><string>Tide on Apple TV plays through this Mac over your home network.</string>
+<key>NSBonjourServices</key><array><string>_tide._tcp</string></array>
 </dict></plist>
 EOF
 [[ $1 == --package ]] || open $app

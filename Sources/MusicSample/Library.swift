@@ -168,6 +168,13 @@ import SwiftUI
         }
     }
 
+    /// A page fetched fresh even if it was loaded earlier this session (Spotify sync).
+    @MainActor
+    func reload(_ id: String) async -> PageData? {
+        freshPages.remove(id)
+        return await page(id)
+    }
+
     func songs(in pageID: String) -> [Song] { pages[pageID]?.songs ?? [] }
 
     /// Songs YouTube Music's Autoplay would play after `song`, without `song` itself.

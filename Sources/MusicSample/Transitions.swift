@@ -230,6 +230,18 @@ func tempoMatch(bpmA: Double, bpmB: Double, maxDiff: Double = 0.02) -> (speed: D
 }
 
 /// Where the next song comes in, in both songs' own time.
+/// What kind of track a song is, as far as mixing goes.
+enum SongKind: String, Codable, Sendable {
+    /// Drums and a beat: mixed by its beat.
+    case regular
+    /// No drums: a piano or acoustic cover, orchestral, a cappella, ambient. It plays
+    /// to its end and the next song starts after it, with no overlap.
+    case unplugged
+    /// A slowed, reverb, nightcore or sped-up edit: its stretched sound misleads the
+    /// beat tracking, so it's never beat-matched.
+    case altered
+}
+
 struct TransitionPlan: Codable {
     /// The playing song's time at which the next one starts.
     var outAt: TimeInterval
@@ -350,9 +362,11 @@ enum TransitionPlanner {
     ///   - tail: the last stretch of the playing song; `length` is its full length.
     ///   - head: the first stretch of the next song.
     ///   - fallbackFade: the fade used when the beat isn't steady enough to count in.
+    ///   - kinds: what kind of track each song is (unknown counts as regular).
     static func plan(tail: BeatAnalysis, length: TimeInterval, head: BeatAnalysis,
-                     fallbackFade: TimeInterval) -> TransitionPlan {
-        var plan = basePlan(tail: tail, length: length, head: head)
+                     fallbackFade: TimeInterval,
+                     kinds: (outgoing: SongKind, incoming: SongKind) = (.regular, .regular)) -> TransitionPlan {
+        var plan = basePlan(tail: tail, length: length, head: head, kinds: kinds)
         // When the beats line up and the basses swap, the outgoing song stays at full
         // volume until the swap (the player holds it) and the mix runs to the end of its
         // sound, so its outro is heard out under the rising new song rather than buried.
@@ -372,7 +386,10 @@ enum TransitionPlanner {
         return plan
     }
 
-    private static func basePlan(tail: BeatAnalysis, length: TimeInterval, head: BeatAnalysis) -> TransitionPlan {
+    private static func basePlan(tail: BeatAnalysis, length: TimeInterval, head: BeatAnalysis,
+                                 kinds: (outgoing: SongKind, incoming: SongKind)) -> TransitionPlan {
+        let unplugged = kinds.outgoing == .unplugged || kinds.incoming == .unplugged
+        let altered = kinds.outgoing == .altered || kinds.incoming == .altered
         // Where the outgoing song's sound really ends: silence after it (often many
         // seconds on YouTube uploads) is skipped, decay down to -48 dB is kept.
         let endA = min(length, (lastLoud(tail) ?? length) + 0.3)
@@ -381,7 +398,7 @@ enum TransitionPlanner {
         // Mixes are over by the time the outgoing song drops away on its own (its last
         // words and chords ring out under the new song), or the level falls into a hole.
         let mixEnd = min(endA, (bodyEnd(tail) ?? endA) + 0.5)
-        if var mix = matchedPlan(tail: tail, head: head, endA: mixEnd, startB: startB) {
+        if !unplugged, !altered, var mix = matchedPlan(tail: tail, head: head, endA: mixEnd, startB: startB) {
             mix.swapsBass = bassCarries(tail, from: mix.outAt, to: mix.outAt + mix.fade)
             mix.ringOut = max(0, endA - mixEnd)
             return mix
@@ -391,7 +408,7 @@ enum TransitionPlanner {
         let lastBeatA = tail.snapDownbeat(atOrBefore: rawLastA)
         let finalDownbeatA = !tail.beats.isEmpty ? tail.beats[lastBeatA] : (mixEnd - 0.5)
 
-        if tail.isSteady && head.isSteady {
+        if tail.isSteady && head.isSteady && !unplugged {
             // Both steady, tempos too far apart to match without audible stretching:
             // a long blend over the end of the outgoing song, 32 beats (8 bars) kept to
             // 10-14 s, starting on a downbeat. The bass swaps halfway so the two kicks
@@ -513,6 +530,11 @@ enum TransitionPlanner {
             // tracker happened to place a single beat, then nudged onto the hits.
             let gridA = refine(tail, first: fitA.first, period: fitA.period, count: cand.count)
             let gridB = refine(head, first: fitB.first, period: fitB.period, count: cand.count)
+            // Only when both songs are clearly on their beat: busy hats and off-beat bass
+            // can leave the onsets nearly as strong half or a quarter beat away, and a
+            // mix on the wrong phase sounds worse than a plain blend.
+            guard onBeat(tail, first: gridA.first, period: gridA.period, count: cand.count),
+                  onBeat(head, first: gridB.first, period: gridB.period, count: cand.count) else { continue }
             // The tempo ratio from the beat lengths over this very stretch: the overall
             // BPM is too coarse, and 0.3% off drifts 90 ms over 64 beats.
             let ratio = gridB.period / gridA.period
@@ -633,6 +655,25 @@ enum TransitionPlanner {
         // A tempo pushed to the edge of the search fits the hits no better than chance
         // (a thin intro): keep the tracked tempo, only shifted.
         return abs(best.period / period - 1) > 0.0055 ? steady : best
+    }
+
+    /// Whether a beat line sits clearly on the beat: its onsets beat the same line
+    /// shifted half a beat by 10% and a quarter beat by at least 5% less.
+    static func onBeat(_ a: BeatAnalysis, first: TimeInterval, period: TimeInterval, count: Int) -> Bool {
+        guard a.loudnessStep > 0, count > 0, a.onset.count > 2 else { return false }
+        let fps = 1 / a.loudnessStep
+        func onset(at t: TimeInterval) -> Double {
+            let x = (t - a.start) * fps
+            let i = Int(x.rounded(.down))
+            guard i >= 0, i + 1 < a.onset.count else { return 0 }
+            let f = x - Double(i)
+            return Double(a.onset[i]) * (1 - f) + Double(a.onset[i + 1]) * f
+        }
+        func score(_ shift: Double) -> Double { (0...count).reduce(0) { $0 + onset(at: first + shift + Double($1) * period) } }
+        let on = score(0)
+        guard on > 0 else { return false }
+        let quarter = max(score(period / 4), score(-period / 4))
+        return on >= 1.1 * score(period / 2) && on >= 0.95 * quarter
     }
 
     /// Most beats (35% or more) sit on a real hit. Even when drums thin out in an outro,

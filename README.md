@@ -74,6 +74,26 @@ Xcode command line tools.
 
 </details>
 
+<details>
+<summary>Apple TV</summary>
+
+Tide on Apple TV plays through Tide on your Mac, over your home network, so you
+need both.
+
+1. Build and open the Mac app from source (above), then in Settings turn on
+   "Let Tide on Apple TV play through this Mac".
+2. Open `TV/TideTV.xcodeproj` in Xcode. Under Signing & Capabilities pick your
+   own team (a free Apple ID works) and change the bundle identifier to
+   something of your own, such as `com.yourname.tide.tv`.
+3. Pair the Apple TV with Xcode (Window > Devices and Simulators), pick it as
+   the run destination and press Run.
+4. The first time, enter the code from Tide's Settings on the Mac on the TV.
+
+With a free Apple ID the app stops opening after 7 days; press Run again to
+renew it. Keep the Mac awake while you listen.
+
+</details>
+
 ## Disclaimer
 
 Tide is an unofficial client, not made by or affiliated with Google or YouTube. It

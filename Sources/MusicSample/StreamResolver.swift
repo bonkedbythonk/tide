@@ -39,8 +39,10 @@ actor StreamResolver {
         .map { URL(fileURLWithPath: $0).appendingPathComponent("yt-dlp") }
         .first { FileManager.default.isExecutableFile(atPath: $0.path) }
 
-    func resolve(_ videoId: String, video: Bool, maxHeight: Int = 1080) async throws -> Streams {
-        let key = videoId + (video ? "#v\(maxHeight)" : "#a")
+    /// `aac`: formats AVPlayer on Apple TV plays: m4a audio instead of mpv's usual Opus,
+    /// and H.264 video instead of VP9 or AV1.
+    func resolve(_ videoId: String, video: Bool, maxHeight: Int = 1080, aac: Bool = false) async throws -> Streams {
+        let key = videoId + (video ? "#v\(maxHeight)" : "#a") + (aac ? "tv" : "")
         if let hit = cache[key], hit.resolvedAt.timeIntervalSinceNow > -4 * 3600 { return hit }
         if let running = inFlight[key] { return try await running.value }
         recentRequests.append(.now)
@@ -50,10 +52,10 @@ actor StreamResolver {
             // Audio: the embedded-player client's links work immediately, the default
             // client's only after a ~5 s wait. Videos stay on the default client, which
             // has HD; the embedded one stops around 720p.
-            if !video, let fast = try? await Self.run(videoId, video: false, maxHeight: maxHeight, client: "web_embedded") {
+            if !video, let fast = try? await Self.run(videoId, video: false, maxHeight: maxHeight, client: "web_embedded", aac: aac) {
                 streams = fast
             } else {
-                streams = try await Self.run(videoId, video: video, maxHeight: maxHeight, client: nil)
+                streams = try await Self.run(videoId, video: video, maxHeight: maxHeight, client: nil, aac: aac)
             }
             streams.gainDb = await gain
             return streams
@@ -161,8 +163,11 @@ actor StreamResolver {
         return min(0, target - track)
     }
 
-    private static func run(_ videoId: String, video: Bool, maxHeight: Int, client: String?) async throws -> Streams {
-        let format = video ? "bv*[height<=\(maxHeight)]+ba/b[height<=\(maxHeight)]/b" : "ba/b"
+    private static func run(_ videoId: String, video: Bool, maxHeight: Int, client: String?, aac: Bool = false) async throws -> Streams {
+        let format = video
+            ? (aac ? "bv*[vcodec^=avc1][height<=\(maxHeight)]+ba[ext=m4a]/b[ext=mp4]"
+                   : "bv*[height<=\(maxHeight)]+ba/b[height<=\(maxHeight)]/b")
+            : aac ? "ba[ext=m4a]" : "ba/b"
         let page = video ? "https://www.youtube.com/watch?v=" : "https://music.youtube.com/watch?v="
         if let warm = await YTDLPWorker.shared.resolve(url: page + videoId, format: format, client: client, cookies: cookieFile?.path),
            let first = warm.urls.first {

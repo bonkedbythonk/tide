@@ -13,6 +13,7 @@ literals in `Sources/MusicSample/`, or are the ones yt-dlp contacts.
 | YouTube and its media servers (`www.youtube.com`, `*.googlevideo.com`), through yt-dlp | Playing a song, and fetching the next few songs ahead of time | Your IP, your account and the songs played |
 | Cover art hosts (`*.googleusercontent.com`, `i.ytimg.com`) | Showing covers | Your IP and the images loaded |
 | LRCLIB (`lrclib.net`) | Showing lyrics | Your IP and the song's title, artist, album and length |
+| Spotify (`accounts.spotify.com`, `api.spotify.com`) | Only with Spotify sync connected: signing in, then on launch and every 30 minutes | Your IP, your Spotify account, the synced playlists, and the title and artist of each song looked up |
 
 ## What stays on your machine
 
@@ -22,6 +23,10 @@ literals in `Sources/MusicSample/`, or are the ones yt-dlp contacts.
   and loudness values, so the app opens instantly. Safe to delete.
 - `~/Library/Caches/MusicApp/images/`: downloaded cover art.
 - Settings and your last queue and position, in the app's preferences.
+- With Spotify sync connected: the Spotify sign-in at
+  `~/Library/Application Support/MusicApp/spotify-token` (owner-only, 0600) and
+  the songs already synced in `spotify-sync.json` next to it. Disconnect (in
+  Settings) removes the sign-in.
 - With a Pinstill wallpaper, Tide reads Pinstill's settings to find your
   boards and reads the pictures in those folders. It changes nothing there.
 

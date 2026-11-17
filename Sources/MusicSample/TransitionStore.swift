@@ -9,12 +9,18 @@ enum TransitionStore {
     private static let clip: TimeInterval = 75
 
     /// - Parameter audioURL: the song's audio link and when it starts answering.
-    static func plan(from a: String, length: TimeInterval, to b: String, fallbackFade: TimeInterval,
+    static func plan(from a: Song, length: TimeInterval, to b: Song, fallbackFade: TimeInterval,
                      audioURL: @escaping (String) async -> (URL, Date)?) async -> TransitionPlan? {
-        async let tail = analysis(a, tail: true, length: length, audioURL: audioURL)
-        async let head = analysis(b, tail: false, length: 0, audioURL: audioURL)
+        async let tail = analysis(a.id, tail: true, length: length, audioURL: audioURL)
+        async let head = analysis(b.id, tail: false, length: 0, audioURL: audioURL)
+        async let kindA = SongKinds.kind(of: a)
+        async let kindB = SongKinds.kind(of: b)
         guard let tail = await tail, let head = await head else { return nil }
-        return TransitionPlanner.plan(tail: tail, length: length, head: head, fallbackFade: fallbackFade)
+        let kinds = (outgoing: await kindA, incoming: await kindB)
+        if kinds != (.regular, .regular) {
+            log.info("\(a.id, privacy: .public)>\(b.id, privacy: .public): kinds \(kinds.outgoing.rawValue, privacy: .public) > \(kinds.incoming.rawValue, privacy: .public)")
+        }
+        return TransitionPlanner.plan(tail: tail, length: length, head: head, fallbackFade: fallbackFade, kinds: kinds)
     }
 
     private static func analysis(_ id: String, tail: Bool, length: TimeInterval,

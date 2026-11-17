@@ -150,6 +150,15 @@ enum SleepTimer: String, CaseIterable, Identifiable {
             if videoMode { attachVideo(to: song) } else { engine.hideVideo() }
         }
     }
+    /// The window is covered or minimized. mpv stops drawing the video then (it drew
+    /// every frame for nobody); the picture comes back when the window shows again.
+    var windowHidden = false {
+        didSet {
+            guard oldValue != windowHidden, videoMode, !needsLoad, !isLoading, lastError == nil,
+                  let song = current else { return }
+            if windowHidden { engine.hideVideo() } else { attachVideo(to: song) }
+        }
+    }
     /// Songs start as music videos only after you last switched to video yourself.
     @ObservationIgnored private(set) var prefersVideo = Prefs.bool("prefersVideo") {
         didSet { Prefs.set(prefersVideo, "prefersVideo") }
@@ -266,7 +275,8 @@ enum SleepTimer: String, CaseIterable, Identifiable {
         guard isPlaying, abs(livePosition - position) < 1, date.timeIntervalSince(liveStamp) < 1 else { return position }
         return clock.position + max(0, date.timeIntervalSince(clock.at))
     }
-    @ObservationIgnored private let resolver = StreamResolver()
+    /// Shared with TVServer, so Apple TV requests count against the same YouTube budget.
+    @ObservationIgnored let resolver = StreamResolver()
     @ObservationIgnored private var nowPlaying: NowPlayingCenter?
     @ObservationIgnored private var loadToken = 0
     @ObservationIgnored private var settingVideoForNewQueue = false
@@ -392,7 +402,7 @@ enum SleepTimer: String, CaseIterable, Identifiable {
         let length = length
         let fallback: TimeInterval = 5
         Task { @MainActor [weak self, resolver] in
-            let plan = await TransitionStore.plan(from: a.id, length: length, to: b.id, fallbackFade: fallback) { id in
+            let plan = await TransitionStore.plan(from: a, length: length, to: b, fallbackFade: fallback) { id in
                 guard let streams = try? await resolver.resolve(id, video: false) else { return nil }
                 return (streams.audio, streams.availableAt)
             }
@@ -988,7 +998,7 @@ enum SleepTimer: String, CaseIterable, Identifiable {
                 let begin = followLive ? self.livePosition + 0.2 : start
                 self.position = begin
                 if !followLive { self.engine.resetTransition() }
-                self.engine.load(audio: streams.audio, video: streams.video, start: begin, paused: !autoplay,
+                self.engine.load(audio: streams.audio, video: self.windowHidden ? nil : streams.video, start: begin, paused: !autoplay,
                                  gainDb: self.matchLoudness ? streams.gainDb : 0)
                 self.isLoading = false
                 await self.afterTrackStarted(video: video, height: height)
@@ -1018,7 +1028,7 @@ enum SleepTimer: String, CaseIterable, Identifiable {
                 let streams = try await self.resolver.resolve(song.id, video: true, maxHeight: height)
                 let wait = streams.availableAt.timeIntervalSinceNow + 0.2
                 if wait > 0 { try await Task.sleep(for: .seconds(wait)) }
-                guard token == self.loadToken, self.videoMode, self.current?.id == song.id,
+                guard token == self.loadToken, self.videoMode, !self.windowHidden, self.current?.id == song.id,
                       let video = streams.video else { return }
                 self.engine.addVideo(video)
             } catch {

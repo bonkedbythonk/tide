@@ -1,0 +1,33 @@
+name: TideTV
+options:
+  bundleIdPrefix: local.tide
+  deploymentTarget:
+    tvOS: "18.0"
+settings:
+  SWIFT_VERSION: "5.0"
+targets:
+  TideTV:
+    type: application
+    platform: tvOS
+    sources:
+      - Sources
+      # Shared with the Mac app: the library types and what the two send each other.
+      - path: ../Sources/MusicSample/Models.swift
+      - path: ../Sources/MusicSample/TVProtocol.swift
+      - path: ../Branding/logo.png
+      - Assets.xcassets
+    info:
+      path: Info.plist
+      properties:
+        CFBundleDisplayName: Tide
+        CFBundleShortVersionString: "1.0"
+        NSLocalNetworkUsageDescription: Tide plays through Tide on your Mac, over your home network.
+        NSBonjourServices: [_tide._tcp]
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+          NSAllowsArbitraryLoadsForMedia: true
+        UIBackgroundModes: [audio]
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: local.tide.tv
+      CODE_SIGN_STYLE: Automatic
+      ASSETCATALOG_COMPILER_APPICON_NAME: "App Icon & Top Shelf Image"

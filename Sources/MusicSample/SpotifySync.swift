@@ -43,6 +43,8 @@ import SwiftUI
     var clientID = UserDefaults.standard.string(forKey: "spotifyClientID") ?? "" {
         didSet { UserDefaults.standard.set(clientID, forKey: "spotifyClientID") }
     }
+    /// The pasted id often carries a stray space, which Spotify refuses.
+    private var trimmedClientID: String { clientID.trimmingCharacters(in: .whitespacesAndNewlines) }
     var pairs: [Pair] = {
         guard let data = UserDefaults.standard.data(forKey: "spotifyPairs") else { return [] }
         return (try? JSONDecoder().decode([Pair].self, from: data)) ?? []
@@ -76,7 +78,7 @@ import SwiftUI
 
     /// Opens Spotify's sign-in in the browser and waits for it to come back to 127.0.0.1:8888.
     func connect() async {
-        let id = clientID.trimmingCharacters(in: .whitespaces)
+        let id = trimmedClientID
         guard !id.isEmpty else { return }
         let verifier = Self.randomString(64)
         let challenge = Data(SHA256.hash(data: Data(verifier.utf8))).base64URL
@@ -138,7 +140,7 @@ import SwiftUI
     private func refreshAccess() async throws {
         guard let refresh = TokenFile.refreshToken else { throw SyncError("Not connected to Spotify") }
         do {
-            try await token(["grant_type": "refresh_token", "refresh_token": refresh, "client_id": clientID])
+            try await token(["grant_type": "refresh_token", "refresh_token": refresh, "client_id": trimmedClientID])
         } catch let error as SyncError where error.rejected {
             // Only when Spotify itself says no; being offline keeps the sign-in.
             disconnect()

@@ -19,6 +19,7 @@ import Network
     /// http://host:port of the paired Mac, once connected.
     @ObservationIgnored private var base: URL?
     @ObservationIgnored private var browser: NWBrowser?
+    @ObservationIgnored private var reconnecting: Task<Bool, Never>?
     @ObservationIgnored private var code = UserDefaults.standard.string(forKey: "code") ?? ""
     @ObservationIgnored private var pairedName = UserDefaults.standard.string(forKey: "mac")
 
@@ -119,9 +120,30 @@ import Network
         return parts.url
     }
 
+    /// Looks the paired Mac up again: Tide gets a new port each time it starts.
+    func reconnect() async -> Bool {
+        if let running = reconnecting { return await running.value }
+        let task = Task { () -> Bool in
+            guard let mac = found.first(where: { $0.name == pairedName }),
+                  let address = await Self.resolve(mac.endpoint) else { return false }
+            base = URL(string: "http://\(address)")
+            return true
+        }
+        reconnecting = task
+        defer { reconnecting = nil }
+        return await task.value
+    }
+
     func get<T: Decodable>(_ path: String, _ query: [URLQueryItem] = []) async throws -> T {
         guard let url = url(path, query) else { throw Failure(errorDescription: "Not connected") }
-        let (data, response) = try await URLSession.shared.data(from: url)
+        let data: Data, response: URLResponse
+        do {
+            (data, response) = try await URLSession.shared.data(from: url)
+        } catch let error as URLError where [.cannotConnectToHost, .timedOut, .networkConnectionLost, .cannotFindHost].contains(error.code) {
+            // Tide on the Mac restarted (new port) or the network blinked: find it and try once more.
+            guard await reconnect(), let again = self.url(path, query) else { throw error }
+            (data, response) = try await URLSession.shared.data(from: again)
+        }
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard status == 200 else {
             throw Failure(errorDescription: String(decoding: data, as: UTF8.self).isEmpty

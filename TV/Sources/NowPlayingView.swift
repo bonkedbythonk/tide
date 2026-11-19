@@ -132,9 +132,10 @@ struct Progress: View {
     let time: TimeInterval
     let duration: TimeInterval
     @Binding var focused: Bool
+    @Environment(\.focusShown) private var shown
 
     var body: some View {
-        ProgressBar(time: time, duration: duration, highlighted: focused)
+        ProgressBar(time: time, duration: duration, highlighted: focused && shown)
             .overlay(ScrubControl(onFocus: { focused = $0 }, seek: { player.seek(by: $0) }))
             .animation(.easeOut(duration: 0.18), value: focused)
     }
@@ -182,7 +183,9 @@ struct TabPillStyle: ButtonStyle {
     private struct Look: View {
         let configuration: ButtonStyleConfiguration
         let selected: Bool
-        @Environment(\.isFocused) private var focused
+        @Environment(\.isFocused) private var isFocused
+        @Environment(\.focusShown) private var shown
+        private var focused: Bool { isFocused && shown }
 
         var body: some View {
             configuration.label

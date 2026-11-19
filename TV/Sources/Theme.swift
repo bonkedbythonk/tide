@@ -90,13 +90,21 @@ struct Panel<Content: View>: View {
 
 // MARK: Focus styles
 
+extension EnvironmentValues {
+    /// False once the remote has been still for a few seconds: the selected item's
+    /// highlight fades, the way Apple's own apps let focus rest. A press brings it back.
+    @Entry var focusShown = true
+}
+
 /// A song row: a soft frosted highlight when focused, like hovering a row on the Mac.
 struct RowStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View { Look(configuration: configuration) }
 
     private struct Look: View {
         let configuration: ButtonStyleConfiguration
-        @Environment(\.isFocused) private var focused
+        @Environment(\.isFocused) private var isFocused
+        @Environment(\.focusShown) private var shown
+        private var focused: Bool { isFocused && shown }
 
         var body: some View {
             configuration.label
@@ -117,7 +125,9 @@ struct CardStyle: ButtonStyle {
 
     private struct Look: View {
         let configuration: ButtonStyleConfiguration
-        @Environment(\.isFocused) private var focused
+        @Environment(\.isFocused) private var isFocused
+        @Environment(\.focusShown) private var shown
+        private var focused: Bool { isFocused && shown }
 
         var body: some View {
             configuration.label
@@ -137,7 +147,9 @@ struct PillStyle: ButtonStyle {
     private struct Look: View {
         let configuration: ButtonStyleConfiguration
         let prominent: Bool
-        @Environment(\.isFocused) private var focused
+        @Environment(\.isFocused) private var isFocused
+        @Environment(\.focusShown) private var shown
+        private var focused: Bool { isFocused && shown }
 
         var body: some View {
             configuration.label
@@ -164,7 +176,9 @@ struct ControlStyle: ButtonStyle {
     private struct Look: View {
         let configuration: ButtonStyleConfiguration
         let main: Bool
-        @Environment(\.isFocused) private var focused
+        @Environment(\.isFocused) private var isFocused
+        @Environment(\.focusShown) private var shown
+        private var focused: Bool { isFocused && shown }
 
         var body: some View {
             configuration.label

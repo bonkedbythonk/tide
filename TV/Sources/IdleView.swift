@@ -5,6 +5,9 @@ import UIKit
 /// loaded, Tide switches to IdleView. Moving focus or a new song counts as activity.
 @MainActor @Observable final class IdleWatch {
     var idle = false
+    /// Whether the selected item shows its highlight (see EnvironmentValues.focusShown).
+    var focusShown = true
+    static let focusRest: TimeInterval = 5
     @ObservationIgnored private var last = Date()
     @ObservationIgnored private var timer: Timer?
     /// Three minutes; `-idleAfter <seconds>` at launch shortens it for testing.
@@ -18,9 +21,13 @@ import UIKit
     }
 
     func start(_ player: TVPlayer) {
-        timer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self, weak player] _ in
+        timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self, weak player] _ in
             MainActor.assumeIsolated {
                 guard let self, let player, !self.idle else { return }
+                let still = Date().timeIntervalSince(self.last)
+                if self.focusShown, still > Self.focusRest {
+                    withAnimation(.easeOut(duration: 0.6)) { self.focusShown = false }
+                }
                 // A video keeps moving by itself; nothing loaded means nothing to show.
                 if player.current != nil, !player.showsVideo, Date().timeIntervalSince(self.last) > Self.after {
                     self.idle = true
@@ -29,7 +36,10 @@ import UIKit
         }
     }
 
-    func touch() { last = Date() }
+    func touch() {
+        last = Date()
+        if !focusShown { withAnimation(.easeOut(duration: 0.15)) { focusShown = true } }
+    }
 
     func wake() {
         idle = false

@@ -25,6 +25,7 @@ struct TideTVApp: App {
             .environment(link)
             .environment(player)
             .environment(idle)
+            .environment(\.focusShown, idle.focusShown)
             .tint(Tide.blue)
             .preferredColorScheme(.dark)
             .onAppear {
@@ -110,9 +111,7 @@ struct MainView: View {
             Tab("Library", systemImage: "square.stack", value: "library") { NavigationStack { LibraryTab() } }
         }
         .onPlayPauseCommand { player.toggle() }
-        // Starting a song shows it playing.
-        .onChange(of: player.current?.id) { old, new in
-            if old == nil, new != nil { tab = "now" }
-        }
+        // A song you start shows it playing.
+        .onChange(of: player.started) { tab = "now" }
     }
 }

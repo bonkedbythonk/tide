@@ -19,6 +19,9 @@ import SwiftUI
     private(set) var mood: String?
     private(set) var moodLoading: String?
 
+    /// Counts songs you started yourself (not ones that simply followed), so the app can show Now Playing.
+    private(set) var started = 0
+
     var current: Song? { queue.indices.contains(index) ? queue[index] : nil }
     var upNext: [Song] { queue.indices.contains(index) ? Array(queue[(index + 1)...]) : [] }
     var duration: TimeInterval {
@@ -51,6 +54,7 @@ import SwiftUI
     @ObservationIgnored private var tick: Timer?
     @ObservationIgnored private var loadToken = 0
     @ObservationIgnored private var seekTarget: TimeInterval?
+    @ObservationIgnored private var retriedLoad = false
 
     // Transitions: the plan for "current>next", the next song waiting on the other
     // player at its first beat, and the mix under way.
@@ -105,6 +109,7 @@ import SwiftUI
         endMood()
         queue = songs
         index = start
+        started += 1
         load()
     }
 
@@ -212,8 +217,9 @@ import SwiftUI
 
     /// - Parameter rise: fade in (a song you picked); false when it simply follows the last.
     /// - Parameter at: where to start, when switching between song and video.
-    private func load(rise: Bool = true, at start: TimeInterval = 0) {
+    private func load(rise: Bool = true, at start: TimeInterval = 0, retry: Bool = false) {
         guard let song = current, let url = url(for: song) else { return }
+        if !retry { retriedLoad = false }
         loadToken += 1
         let token = loadToken
         cancelMix()
@@ -290,8 +296,18 @@ import SwiftUI
         let t = player.currentTime().seconds
         time = seekTarget ?? (t.isFinite ? t : 0)
         if player.currentItem?.status == .failed {
-            error = player.currentItem?.error?.localizedDescription ?? "Couldn't play this song"
-            isPlaying = false
+            if !retriedLoad {
+                // Most often Tide on the Mac restarted on a new port: find it, then pick up where it was.
+                retriedLoad = true
+                let at = time
+                player.replaceCurrentItem(with: nil)
+                Task {
+                    if await link.reconnect() { load(rise: false, at: at, retry: true) } else { error = "Can't reach Tide on the Mac" }
+                }
+            } else {
+                error = player.currentItem?.error?.localizedDescription ?? "Couldn't play this song"
+                isPlaying = false
+            }
         }
         if let ramp = levelRamp {
             let p = ramp.seconds <= 0 ? 1 : min(1, Date().timeIntervalSince(ramp.start) / ramp.seconds)
@@ -570,6 +586,7 @@ import SwiftUI
             if current == nil || !isPlaying {
                 queue = batch
                 index = 0
+                started += 1
                 load()
             } else {
                 cancelMix()

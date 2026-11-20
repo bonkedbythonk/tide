@@ -8,7 +8,7 @@ version=$(cat version.txt)
 rm -rf $app MusicSample.app
 mkdir -p $app/Contents/MacOS $app/Contents/Resources
 cp .build/release/MusicSample $app/Contents/MacOS/
-cp Branding/Icon.icns $app/Contents/Resources/
+cp Branding/Icon.icns THIRD_PARTY_NOTICES.txt $app/Contents/Resources/
 cat > $app/Contents/Info.plist <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

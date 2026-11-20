@@ -104,4 +104,6 @@ Personal project, no support promised. Building and contributing are in
 [CONTRIBUTING.md](CONTRIBUTING.md). If you like it:
 [ko-fi.com/bonkedbythonk](https://ko-fi.com/bonkedbythonk).
 
-Licensed under [GPLv3](LICENSE).
+Copyright (C) 2026 Thomas. Licensed under [GPLv3](LICENSE). Tide includes
+libmpv, FFmpeg and other libraries under their own licenses; see
+[THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt), also inside the app.

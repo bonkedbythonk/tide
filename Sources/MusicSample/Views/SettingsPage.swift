@@ -1,3 +1,4 @@
+import QuickLook
 import SwiftUI
 
 /// Every setting in one page of the main window (⌘, or the gear in the sidebar).
@@ -5,6 +6,10 @@ struct SettingsPage: View {
     @Environment(Player.self) private var player
     @Environment(Library.self) private var library
     @Environment(Router.self) private var router
+    @State private var noticesPreview: URL?
+
+    /// Copied into Tide.app/Contents/Resources by run.sh; nil under `swift run`.
+    private static let noticesURL = Bundle.main.url(forResource: "THIRD_PARTY_NOTICES", withExtension: "txt")
 
     var body: some View {
         @Bindable var player = player
@@ -49,7 +54,21 @@ struct SettingsPage: View {
                         Button("Show") { router.showShortcuts = true }
                     }
                 }
+                Section {
+                    LabeledContent {
+                        Button("View") { noticesPreview = Self.noticesURL }
+                            .disabled(Self.noticesURL == nil)
+                    } label: {
+                        Text("Acknowledgements")
+                        Text("The licenses of the libraries this app is built with, and where their source is.")
+                    }
+                } header: {
+                    Text("Licenses")
+                } footer: {
+                    Text("Tide is free software under the GPL, version 3.")
+                }
             }
+            .quickLookPreview($noticesPreview)
             .formStyle(.grouped)
             .scrollContentBackground(.hidden)
             .frame(maxWidth: 640)

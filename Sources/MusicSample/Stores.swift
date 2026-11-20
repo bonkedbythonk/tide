@@ -150,15 +150,9 @@ enum SleepTimer: String, CaseIterable, Identifiable {
             if videoMode { attachVideo(to: song) } else { engine.hideVideo() }
         }
     }
-    /// The window is covered or minimized. mpv stops drawing the video then (it drew
-    /// every frame for nobody); the picture comes back when the window shows again.
-    var windowHidden = false {
-        didSet {
-            guard oldValue != windowHidden, videoMode, !needsLoad, !isLoading, lastError == nil,
-                  let song = current else { return }
-            if windowHidden { engine.hideVideo() } else { attachVideo(to: song) }
-        }
-    }
+    /// The window is covered or minimized: the player bar stops redrawing. The video
+    /// keeps playing; dropping it meant seconds of black when the window came back.
+    var windowHidden = false
     /// Songs start as music videos only after you last switched to video yourself.
     @ObservationIgnored private(set) var prefersVideo = Prefs.bool("prefersVideo") {
         didSet { Prefs.set(prefersVideo, "prefersVideo") }
@@ -998,7 +992,7 @@ enum SleepTimer: String, CaseIterable, Identifiable {
                 let begin = followLive ? self.livePosition + 0.2 : start
                 self.position = begin
                 if !followLive { self.engine.resetTransition() }
-                self.engine.load(audio: streams.audio, video: self.windowHidden ? nil : streams.video, start: begin, paused: !autoplay,
+                self.engine.load(audio: streams.audio, video: streams.video, start: begin, paused: !autoplay,
                                  gainDb: self.matchLoudness ? streams.gainDb : 0)
                 self.isLoading = false
                 await self.afterTrackStarted(video: video, height: height)
@@ -1028,7 +1022,7 @@ enum SleepTimer: String, CaseIterable, Identifiable {
                 let streams = try await self.resolver.resolve(song.id, video: true, maxHeight: height)
                 let wait = streams.availableAt.timeIntervalSinceNow + 0.2
                 if wait > 0 { try await Task.sleep(for: .seconds(wait)) }
-                guard token == self.loadToken, self.videoMode, !self.windowHidden, self.current?.id == song.id,
+                guard token == self.loadToken, self.videoMode, self.current?.id == song.id,
                       let video = streams.video else { return }
                 self.engine.addVideo(video)
             } catch {

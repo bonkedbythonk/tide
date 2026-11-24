@@ -294,10 +294,13 @@ extension BeatAnalysis {
     /// Index (0...3) of the first downbeat in `beats` (Beat 1 of a 4-beat bar).
     /// Synthwave, phonk, dance and pop songs have a heavy kick and chord transient
     /// on beat 1. We test all 4 phase offsets and pick the one with maximum combined
-    /// sub-150Hz bass energy and onset flux.
+    /// sub-150Hz bass energy and onset flux. Beats the tracker carries on into silence
+    /// before or after the music don't count: their -90 dB bass would sink their phase.
     var downbeatOffset: Int {
         guard beats.count >= 8, loudnessStep > 0 else { return 0 }
         let fps = 1 / loudnessStep
+        let first = TransitionPlanner.firstLoud(self) ?? -.infinity
+        let last = TransitionPlanner.lastLoud(self) ?? .infinity
         var bestOffset = 0
         var bestScore = -Double.infinity
         for offset in 0..<4 {
@@ -306,7 +309,7 @@ extension BeatAnalysis {
             var i = offset
             while i < beats.count {
                 let frameIndex = Int(((beats[i] - start) * fps).rounded())
-                if frameIndex >= 0 && frameIndex < bass.count {
+                if frameIndex >= 0 && frameIndex < bass.count, beats[i] >= first, beats[i] <= last {
                     let b = Double(bass[frameIndex])
                     let o = frameIndex < onset.count ? Double(onset[frameIndex]) : 0
                     sum += b + 2.0 * o

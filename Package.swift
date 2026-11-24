@@ -15,6 +15,13 @@ let package = Package(
             dependencies: [.product(name: "MPVKit-GPL", package: "MPVKit")],
             path: "Sources/MusicSample",
             swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .testTarget(
+            name: "TideTests",
+            dependencies: ["MusicSample"],
+            path: "Tests/TideTests",
+            resources: [.copy("Fixtures")],
+            swiftSettings: [.swiftLanguageMode(.v5)]
         )
     ]
 )

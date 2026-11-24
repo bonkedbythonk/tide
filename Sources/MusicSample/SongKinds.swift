@@ -23,7 +23,7 @@ enum SongKinds {
 
     #if canImport(FoundationModels)
     @available(macOS 26, *)
-    private static func judged(_ song: Song) async -> SongKind? {
+    static func judged(_ song: Song) async -> SongKind? {
         guard case .available = SystemLanguageModel.default.availability else { return nil }
         let session = LanguageModelSession(instructions: """
             You sort songs for a DJ by their title, artist and album. Answer "unplugged" for \

@@ -685,8 +685,9 @@ enum TransitionPlanner {
         let fps = 1 / a.loudnessStep
         let hits = beats.filter { t in
             let i = Int(((t - a.start) * fps).rounded())
-            let near = max(0, i - 1)...min(a.onset.count - 1, i + 1)
-            return near.contains { a.onset[$0] > 0.20 }
+            let lo = max(0, i - 1), hi = min(a.onset.count - 1, i + 1)
+            // A beat outside the onsets has no hit to sit on.
+            return lo <= hi && (lo...hi).contains { a.onset[$0] > 0.20 }
         }
         return Double(hits.count) >= Double(beats.count) * 0.35
     }

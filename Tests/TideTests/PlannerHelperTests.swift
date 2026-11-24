@@ -79,20 +79,17 @@ import Testing
         #expect(!TransitionPlanner.onHits(a, a.beats[0..<32].map { $0 + 0.25 }))
     }
 
-    /// Beats before the first or past the last onset frame build an inverted range
-    /// (0...-214, 1075...860) and trap. The planner only passes tracked beats today,
-    /// which always sit inside the onsets, so this is latent. Run in a child process so
-    /// the trap doesn't end the suite.
+    /// Beats before the first or past the last onset frame, or an analysis with no
+    /// onsets, once built an inverted range and trapped. Run in a child process so a
+    /// regression fails this test instead of ending the suite.
     @Test func onHitsWithBeatsOutsideOnsetsDoesNotTrap() async {
-        await withKnownIssue("onHits traps on beats outside the onset frames (Transitions.swift:685)") {
-            await #expect(processExitsWith: .success) {
-                let a = Make.analysis(duration: 20)
-                _ = TransitionPlanner.onHits(a, [a.start + 25, a.start + 30])
-            }
-            await #expect(processExitsWith: .success) {
-                let a = Make.analysis(duration: 20)
-                _ = TransitionPlanner.onHits(a, [a.start - 5])
-            }
+        await #expect(processExitsWith: .success) {
+            let a = Make.analysis(duration: 20)
+            precondition(!TransitionPlanner.onHits(a, [a.start + 25, a.start + 30]))
+            precondition(!TransitionPlanner.onHits(a, [a.start - 5]))
+            var empty = a
+            empty.onset = []
+            precondition(!TransitionPlanner.onHits(empty, [a.start + 1]))
         }
     }
 

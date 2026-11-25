@@ -48,15 +48,7 @@ actor StreamResolver {
         recentRequests.append(.now)
         let task = Task {
             async let gain = Self.loudnessGain(videoId)
-            var streams: Streams
-            // Audio: the embedded-player client's links work immediately, the default
-            // client's only after a ~5 s wait. Videos stay on the default client, which
-            // has HD; the embedded one stops around 720p.
-            if !video, let fast = try? await Self.run(videoId, video: false, maxHeight: maxHeight, client: "web_embedded", aac: aac) {
-                streams = fast
-            } else {
-                streams = try await Self.run(videoId, video: video, maxHeight: maxHeight, client: nil, aac: aac)
-            }
+            var streams = try await Self.run(videoId, video: video, maxHeight: maxHeight, client: nil, aac: aac)
             streams.gainDb = await gain
             return streams
         }

@@ -636,7 +636,9 @@ import SwiftUI
     /// A Spotify search for the song, copied for friends on Spotify. An exact track
     /// link would need a Spotify API key; the search puts the song at the top.
     func copySpotifyLink(_ song: Song) {
-        let query = "\(song.title) \(song.artist)".addingPercentEncoding(withAllowedCharacters: .urlPathAllowed.subtracting(["/"])) ?? ""
+        // Only unreserved ASCII stays as is: chat apps end a link at "(", ")" or "&".
+        let unreserved = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~")
+        let query = "\(song.title) \(song.artist)".addingPercentEncoding(withAllowedCharacters: unreserved) ?? ""
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString("https://open.spotify.com/search/\(query)", forType: .string)
         showToast("Spotify link copied")

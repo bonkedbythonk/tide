@@ -65,6 +65,7 @@ import SwiftUI
     /// Loads your Spotify playlists, syncs once, then every 30 minutes.
     func start(_ library: Library) async {
         self.library = library
+        library.spotify = self
         guard connected, !Demo.isOn else { return }
         timer?.invalidate()
         timer = Timer.scheduledTimer(withTimeInterval: 30 * 60, repeats: true) { [weak self] _ in
@@ -246,6 +247,12 @@ import SwiftUI
                 _ = try await api("POST", "playlists/\(id)/items", body: ["uris": Array(uris[start..<min(start + 100, uris.count)])])
             }
         }
+    }
+
+    /// The song's open.spotify.com track link, when signed in and Spotify finds it.
+    func trackLink(_ title: String, _ artist: String) async -> String? {
+        guard connected, let id = try? await spotifyFind(title, Self.firstArtist(artist)) else { return nil }
+        return "https://open.spotify.com/track/\(id)"
     }
 
     private func spotifyFind(_ title: String, _ artist: String) async throws -> String? {

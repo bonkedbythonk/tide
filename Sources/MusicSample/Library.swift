@@ -16,6 +16,8 @@ import SwiftUI
     var toast: String?
 
     @ObservationIgnored let client = YTClient()
+    /// Set once Spotify sync starts; finds exact track links to copy.
+    @ObservationIgnored weak var spotify: SpotifySync?
     @ObservationIgnored private var songIndex: [String: Song] = [:]
     @ObservationIgnored private var loadingPages: Set<String> = []
     @ObservationIgnored private var shelfPages: [String: [ShelfItem]] = [:]
@@ -633,15 +635,22 @@ import SwiftUI
         showToast(songs.count == 1 ? "Playing next: \(songs[0].title)" : "Playing \(songs.count) songs next")
     }
 
-    /// A Spotify search for the song, copied for friends on Spotify. An exact track
-    /// link would need a Spotify API key; the search puts the song at the top.
+    /// The song's Spotify track link, copied for friends on Spotify. Finding the track
+    /// needs the Spotify sign-in from Spotify sync; without it, a Spotify search is copied.
+    @MainActor
     func copySpotifyLink(_ song: Song) {
-        // Only unreserved ASCII stays as is: chat apps end a link at "(", ")" or "&".
-        let unreserved = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~")
-        let query = "\(song.title) \(song.artist)".addingPercentEncoding(withAllowedCharacters: unreserved) ?? ""
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString("https://open.spotify.com/search/\(query)", forType: .string)
-        showToast("Spotify link copied")
+        Task { @MainActor in
+            var link = await spotify?.trackLink(song.title, song.artist)
+            if link == nil {
+                // Only unreserved ASCII stays as is: chat apps end a link at "(", ")" or "&".
+                let unreserved = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~")
+                let query = "\(song.title) \(song.artist)".addingPercentEncoding(withAllowedCharacters: unreserved) ?? ""
+                link = "https://open.spotify.com/search/\(query)"
+            }
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(link ?? "", forType: .string)
+            showToast("Spotify link copied")
+        }
     }
 
     /// Writes a changed page to disk, so the next launch doesn't show the old version.
